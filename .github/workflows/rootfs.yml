@@ -138,7 +138,7 @@ jobs:
     name: ${{ matrix.device }} rootfs
     needs: prepare
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
@@ -180,7 +180,8 @@ jobs:
             mmdebstrap qemu-user-static binfmt-support \
             e2fsprogs android-sdk-libsparse-utils pigz zstd kmod rsync \
             build-essential bc flex bison python3 \
-            clang lld llvm libssl-dev libelf-dev libncurses-dev dwarves \
+            clang lld llvm binutils-aarch64-linux-gnu \
+            libssl-dev libelf-dev libncurses-dev dwarves \
             git curl ca-certificates xz-utils
           sudo update-binfmts --enable qemu-aarch64 || true
           ls -l /proc/sys/fs/binfmt_misc/qemu-aarch64 || echo "::warning::no qemu-aarch64 binfmt"

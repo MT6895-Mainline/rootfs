@@ -249,8 +249,18 @@ distro_bootstrap "$ROOTFS" "$SUITE" "$ARCH" "$MIRROR" "$JOBS"
 distro_configure "$ROOTFS" "$SUITE"
 
 log "4. install kernel modules"
+# With LLVM=1 the kernel strips modules with llvm-strip; if the tool is absent,
+# ship them unstripped rather than failing after a long build.
+MOD_STRIP=1
+case " $KERNEL_MAKE_ARGS " in
+	*" LLVM="*)
+		if ! command -v llvm-strip >/dev/null 2>&1; then
+			echo "warning: llvm-strip not found; installing modules unstripped"
+			MOD_STRIP=""
+		fi ;;
+esac
 # shellcheck disable=SC2086
-make $KERNEL_MAKE_ARGS INSTALL_MOD_PATH="$ROOTFS" INSTALL_MOD_STRIP=1 modules_install
+make $KERNEL_MAKE_ARGS INSTALL_MOD_PATH="$ROOTFS" ${MOD_STRIP:+INSTALL_MOD_STRIP=1} modules_install
 # The directory modules_install actually used is the truth: if it differs from
 # what we expected, the image would boot without modules, so say so loudly.
 INSTALLED_MODULE_DIR="$(ls "$ROOTFS/lib/modules" 2>/dev/null | head -1)"
