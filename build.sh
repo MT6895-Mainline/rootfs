@@ -58,6 +58,13 @@ KERNEL_LOCALVERSION_ARG=""
 die() { echo "error: $*" >&2; exit 1; }
 log() { printf '\n=== %s ===\n' "$*"; }
 
+# CI logs are not reachable without a token, but workflow annotations are, so
+# make the failing line announce itself instead of leaving only an exit code.
+trap 'rc=$?; if [ "$rc" != "0" ]; then
+	printf "::error title=build.sh failed::exit %s at line %s: %s\n" \
+		"$rc" "$LINENO" "$BASH_COMMAND" >&2
+fi' ERR
+
 usage() {
 	awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"
 	exit 0

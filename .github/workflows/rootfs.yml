@@ -220,6 +220,7 @@ jobs:
           TAG: ${{ matrix.tag }}
         run: |
           set -eux
+          set +e
           args=(--device "$DEVICE" --suite "$SUITE" --ts "$TS"
                 --kernel-repo "$PWD/linux" --kernel-ref "$KREF"
                 --jobs "$(nproc)" --out "$PWD/out")
@@ -231,7 +232,17 @@ jobs:
           [ -n "${KCONFIG:-}" ] && args+=(--kernel-config "$KCONFIG")
           [ -n "${{ inputs.kernel_localversion }}" ] && args+=(--kernel-localversion "${{ inputs.kernel_localversion }}")
           [ -n "${TAG:-}" ] && args+=(--name-suffix "$TAG")
-          sudo -E ./build.sh "${args[@]}"
+          sudo -E ./build.sh "${args[@]}" 2>&1 | tee /tmp/build.log
+          rc="${PIPESTATUS[0]}"
+          if [ "$rc" != "0" ]; then
+            # surface the tail as a single annotation: the workflow log itself
+            # needs a token to read, annotations do not
+            msg="$(tail -12 /tmp/build.log | sed 's/%/%25/g; s/\r//g' | paste -sd'%0A' -)"
+            echo "::error title=${DEVICE} build.sh exit ${rc}::${msg}"
+            echo "--- last 40 lines of the build log ---"
+            tail -40 /tmp/build.log
+            exit "$rc"
+          fi
 
       - name: Build info
         run: |
@@ -304,9 +315,16 @@ jobs:
       - name: Checksums and notes
         run: |
           set -euo pipefail
+          mkdir -p out
           cd out
+          if ! ls -A | grep -q .; then
+            echo "::error title=nothing to publish::no device produced artifacts"
+            echo "no artifacts were downloaded"
+            exit 1
+          fi
           ls -lh
-          sha256sum -- * > SHA256SUMS
+          sha256sum -- * > SHA256SUMS 2>/dev/null || true
+          [ -f SHA256SUMS ] || sha256sum ./* > SHA256SUMS
           {
             echo "## MT6895-Mainline rootfs \`$TS\`"
             echo
