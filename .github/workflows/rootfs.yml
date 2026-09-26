@@ -48,6 +48,14 @@ on:
         description: "URL of a tarball with the vendor firmware (bring your own blobs)"
         required: false
         default: ""
+      kernel_config_url:
+        description: "URL of the exact .config the boot image was built with (empty = defconfig + device fragment)"
+        required: false
+        default: ""
+      kernel_localversion:
+        description: "suffix the flashed kernel reports in uname -r, e.g. + (empty = use the device profile)"
+        required: false
+        default: ""
       publish_release:
         description: "publish the result as a GitHub release"
         required: false
@@ -190,9 +198,24 @@ jobs:
           du -sh firmware || true
           echo "dir=$PWD/firmware" >> "$GITHUB_OUTPUT"
 
+      - name: Fetch the kernel config to match
+        id: kconfig
+        if: inputs.kernel_config_url != ''
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 -o kernel.config "${{ inputs.kernel_config_url }}"
+          # guard: a stray HTML error page would silently become a .config
+          grep -qE '^CONFIG_[A-Z0-9_]+=' kernel.config || {
+            echo "::error::downloaded kernel config does not look like a .config"
+            exit 1
+          }
+          echo "config lines: $(wc -l < kernel.config)"
+          echo "file=$PWD/kernel.config" >> "$GITHUB_OUTPUT"
+
       - name: Build rootfs
         env:
           FIRMWARE_DIR: ${{ steps.firmware.outputs.dir }}
+          KCONFIG: ${{ steps.kconfig.outputs.file }}
           TAG: ${{ matrix.tag }}
         run: |
           set -eux
@@ -204,6 +227,8 @@ jobs:
           [ -n "${ROOT_PASSWORD:-}" ] && args+=(--root-password "$ROOT_PASSWORD")
           [ -n "${WIFI_SSID:-}" ] && args+=(--wifi-ssid "$WIFI_SSID" --wifi-password "$WIFI_PASSWORD")
           [ -n "${FIRMWARE_DIR:-}" ] && args+=(--firmware "$FIRMWARE_DIR")
+          [ -n "${KCONFIG:-}" ] && args+=(--kernel-config "$KCONFIG")
+          [ -n "${{ inputs.kernel_localversion }}" ] && args+=(--kernel-localversion "${{ inputs.kernel_localversion }}")
           [ -n "${TAG:-}" ] && args+=(--name-suffix "$TAG")
           sudo -E ./build.sh "${args[@]}"
 
@@ -215,6 +240,12 @@ jobs:
             echo "MT6895-Mainline rootfs"
             echo "device:        $DEVICE"
             echo "kernel branch: $KREF"
+            if [ -n "${{ inputs.kernel_config_url }}" ]; then
+              echo "kernel config: supplied (${{ inputs.kernel_config_url }})"
+            else
+              echo "kernel config: defconfig + device fragment"
+            fi
+            echo "kernel release: see KERNEL-INFO-${DEVICE}.txt (uname -r must match)"
             echo "rootfs:        debian $SUITE arm64"
             echo "built:         $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
             echo "run:           ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
@@ -234,6 +265,7 @@ jobs:
           path: |
             out/rootfs-*.img*
             out/BUILD-INFO-*.txt
+            out/KERNEL-INFO-*.txt
           if-no-files-found: error
           compression-level: 0
 

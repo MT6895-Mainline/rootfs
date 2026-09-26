@@ -10,13 +10,18 @@ initramfs and boot-image side stays in the kernel repository.
 **Landing now: `pearl` and `xaga`.**  `xaga-6.18`, `qqcandy` and `rubens` are
 already wired up in `devices/` and can be enabled with the `devices` input.
 
-| device | profile | kernel branch | kernel | config | rootfs label |
-|---|---|---|---|---|---|
-| `pearl` (Redmi Note 12T Pro) | `devices/pearl.conf` | `7.2-mt6895-xiaomi-pearl` | 7.2.7 | `pearl.config` | `archpearl` |
-| `xaga` | `devices/xaga.conf` | `7.2-mt6895-xiaomi-xaga` | 7.2.0 | `xaga.config` | `xaga-rootfs` |
-| `xaga-6.18` | `devices/xaga.conf` | `6.18-mt6895-xiaomi-xaga` | 6.18.0 | `xaga.config` | `xaga-rootfs` |
-| `qqcandy` (OPPO K10 / Ace Racing) | `devices/qqcandy.conf` | `6.18-mt6895-oplus-qqcandy` | 6.18.0 | `qqcandy.config` | `mt6895qqcandy` |
-| `rubens` (port) | `devices/rubens.conf` | `port/rubens-clean` | 7.2.0 | `rubens.config` | `mt6895rubens` |
+| device | profile | kernel branch | kernel | config | modules dir (`uname -r`) | rootfs label |
+|---|---|---|---|---|---|---|
+| `pearl` (Redmi Note 12T Pro) | `devices/pearl.conf` | `7.2-mt6895-xiaomi-pearl` | 7.2.7 | `pearl.config` | `7.2.7+` (verified) | `archpearl` |
+| `xaga` | `devices/xaga.conf` | `7.2-mt6895-xiaomi-xaga` | 7.2.0 | `xaga.config` | `7.2.0+` (assumed) | `xaga-rootfs` |
+| `xaga-6.18` | `devices/xaga.conf` | `6.18-mt6895-xiaomi-xaga` | 6.18.0 | `xaga.config` | `6.18.0+` (assumed) | `xaga-rootfs` |
+| `qqcandy` (OPPO K10 / Ace Racing) | `devices/qqcandy.conf` | `6.18-mt6895-oplus-qqcandy` | 6.18.0 | `qqcandy.config` | `6.18.0+` (assumed) | `mt6895qqcandy` |
+| `rubens` (port) | `devices/rubens.conf` | `port/rubens-clean` | 7.2.0 | `rubens.config` | `7.2.0+` (assumed) | `mt6895rubens` |
+
+The `modules dir` column has to match the device exactly, otherwise the image
+boots without any modules; every image ships a `KERNEL-INFO-<device>.txt` that
+states what it was built for, and `kernel_localversion` overrides the assumption
+for a device whose kernel reports something else.
 
 ## Quick start
 
@@ -94,6 +99,20 @@ tools/extract-firmware.sh, install-firmware.sh
   (`defconfig` + `arch/arm64/configs/<device>.config` + `olddefconfig`, with
   `KERNEL_MAKE_ARGS` matching the toolchain the boot image was built with) and
   `modules_install` goes straight into the rootfs, so `vermagic` cannot drift.
+  For `pearl` this reproduces the running kernel closely: 5016 config options and
+  1428 modules against 5024 and 1391 on the device, the difference being compiler
+  identity and a handful of built-in/module choices.
+* **The module directory must equal `uname -r`.**  A git kernel build that is not
+  at a tag reports `7.2.7+`, while the same source exported as a tarball (what CI
+  checks out) reports `7.2.7`; `modules_install` then writes to a directory the
+  kernel never reads.  `KERNEL_LOCALVERSION="+"` in the device profile pins the
+  suffix, and `build.sh` asks the tree for its real `kernelrelease` instead of
+  trusting the `Makefile`, so `depmod` and the summary use the same name the
+  kernel will.
+* **If your boot image is not a `defconfig + <device>.config` build, pass the
+  config it *was* built with**: `--kernel-config /path/to/.config`, or the
+  `kernel_config_url` workflow input, or `KERNEL_FULL_CONFIG` in the profile.
+  Read it off a running device with `zcat /proc/config.gz > pearl.config`.
 * `pearl` uses `KERNEL_MAKE_ARGS="LLVM=1"` because the pearl boot images in use
   are clang builds.
 * Images are sparse (`img2simg`) and gzipped, split into 1900 MB parts above the

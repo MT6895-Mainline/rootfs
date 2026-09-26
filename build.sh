@@ -16,6 +16,9 @@
 #   sudo ./build.sh --device pearl --kernel-repo ./linux
 #   sudo ./build.sh --device pearl --kernel-repo ./linux --firmware ./firmware \
 #                   --hostname pearl --wifi-ssid MyNet --wifi-password secret
+#   sudo ./build.sh --device pearl --kernel-repo ./linux \
+#                   --kernel-config /path/to/the/kernel/.config
+#   sudo ./build.sh --device pearl --kernel-repo ./linux --kernel-localversion "+"
 #
 set -euo pipefail
 
@@ -29,6 +32,10 @@ MIRROR=""
 OUT="$HERE/out"
 KERNEL_REPO="${KERNEL_REPO:-}"
 KERNEL_REF=""
+# Optional full .config.  Use this when the boot image you flash was built from
+# a config that is not exactly `defconfig + <device>.config`: the modules have to
+# agree with that config or they will refuse to load.
+KERNEL_CONFIG_FILE="${KERNEL_CONFIG_FILE:-}"
 FIRMWARE_DIR=""
 JOBS="$(nproc)"
 TS="$(date -u +%Y%m%d-%H%M%S)"
@@ -45,6 +52,8 @@ WIFI_SSID=""
 WIFI_PASSWORD=""
 # Kernel make arguments, e.g. "LLVM=1" for clang builds (profile sets it).
 KERNEL_MAKE_ARGS="${KERNEL_MAKE_ARGS:-}"
+# Local version suffix the flashed kernel carries (profile sets it, e.g. "+").
+KERNEL_LOCALVERSION_ARG=""
 
 die() { echo "error: $*" >&2; exit 1; }
 log() { printf '\n=== %s ===\n' "$*"; }
@@ -64,6 +73,8 @@ while [ $# -gt 0 ]; do
 		--ts) TS="${2:?}"; shift 2 ;;
 		--kernel-repo) KERNEL_REPO="${2:?}"; shift 2 ;;
 		--kernel-ref) KERNEL_REF="${2:?}"; shift 2 ;;
+		--kernel-config) KERNEL_CONFIG_FILE="${2:?}"; shift 2 ;;
+		--kernel-localversion) KERNEL_LOCALVERSION_ARG="${2:-}"; shift 2 ;;
 		--kernel-make-args) KERNEL_MAKE_ARGS="${2:?}"; shift 2 ;;
 		--firmware) FIRMWARE_DIR="${2:?}"; shift 2 ;;
 		--jobs) JOBS="${2:?}"; shift 2 ;;
@@ -95,6 +106,18 @@ done
 KERNEL_REF="${KERNEL_REF:-$KERNEL_BRANCH}"
 DISTRO_NAME="$(basename "$DISTRO")"
 HOSTNAME_OVERRIDE="${HOSTNAME_OVERRIDE:-$DEVICE}"
+# A profile may pin the exact config the device's boot image was built from
+# (KERNEL_FULL_CONFIG="configs/<file>.config").  --kernel-config still wins.
+if [ -z "$KERNEL_CONFIG_FILE" ] && [ -n "${KERNEL_FULL_CONFIG:-}" ]; then
+	case "$KERNEL_FULL_CONFIG" in
+		/*) KERNEL_CONFIG_FILE="$KERNEL_FULL_CONFIG" ;;
+		*)  KERNEL_CONFIG_FILE="$HERE/$KERNEL_FULL_CONFIG" ;;
+	esac
+	echo "profile pins the kernel config: $KERNEL_CONFIG_FILE"
+fi
+# The profile sets the suffix the flashed kernel reports in `uname -r`;
+# --kernel-localversion overrides it (also used to clear it).
+KERNEL_LOCALVERSION="${KERNEL_LOCALVERSION_ARG:-${KERNEL_LOCALVERSION:-}}"
 
 for tool in mmdebstrap mkfs.ext4 zstd du findmnt depmod; do
 	command -v "$tool" >/dev/null 2>&1 || die "missing host tool: $tool"
@@ -113,31 +136,81 @@ BASE="$STUB.img"
 IMGF="$OUT/$BASE"
 rm -rf "$WORK"
 mkdir -p "$ROOTFS" "$KBOUT" "$OUT"
+# The script runs as root, but later CI steps (build info) write into --out as
+# the invoking user, so hand the directory over when sudo tells us who that is.
+if [ -n "${SUDO_UID:-}" ] && [ -n "${SUDO_GID:-}" ]; then
+	chown "$SUDO_UID:$SUDO_GID" "$OUT" 2>/dev/null || true
+fi
 
 # ---------------------------------------------------------------- kernel modules
 log "0. kernel '$KERNEL_REF' from $KERNEL_REPO"
-KVER="$(git -C "$KERNEL_REPO" show "$KERNEL_REF:Makefile" 2>/dev/null \
+KVER_MAKEFILE="$(git -C "$KERNEL_REPO" show "$KERNEL_REF:Makefile" 2>/dev/null \
 	| awk -F' = ' '/^(VERSION|PATCHLEVEL|SUBLEVEL) =/{printf "%s%s", sep, $2; sep="."}')"
-[ -n "$KVER" ] || die "cannot determine kernel version for $KERNEL_REF"
-echo "kernel version: $KVER"
+[ -n "$KVER_MAKEFILE" ] || die "cannot determine kernel version for $KERNEL_REF"
+echo "kernel version in the Makefile: $KVER_MAKEFILE"
 
 git -C "$KERNEL_REPO" archive --format=tar "$KERNEL_REF" | tar -x -C "$KBOUT"
 cd "$KBOUT"
 
-log "1. kernel config (defconfig + ${KERNEL_CONFIGS})"
+log "1. kernel config"
 export ARCH
 echo "kernel make args: ${KERNEL_MAKE_ARGS:-<none>}"
-for cfg in $KERNEL_CONFIGS; do
-	[ -f "arch/arm64/configs/$cfg" ] || die "missing arch/arm64/configs/$cfg"
-done
-# shellcheck disable=SC2086
-make -s $KERNEL_MAKE_ARGS defconfig
-for cfg in $KERNEL_CONFIGS; do
-	scripts/kconfig/merge_config.sh -m -O . .config "arch/arm64/configs/$cfg" >/dev/null
-done
+# A full config wins: whoever supplies it knows the exact config the boot image
+# was built with, which is the only thing that guarantees the modules load.
+CONFIG_SOURCE=""
+if [ -n "$KERNEL_CONFIG_FILE" ]; then
+	[ -f "$KERNEL_CONFIG_FILE" ] || die "--kernel-config '$KERNEL_CONFIG_FILE' is not a file"
+	cp "$KERNEL_CONFIG_FILE" .config
+	CONFIG_SOURCE="$(cd "$(dirname "$KERNEL_CONFIG_FILE")" && pwd)/$(basename "$KERNEL_CONFIG_FILE")"
+	echo "using the supplied .config: $CONFIG_SOURCE"
+else
+	frags="arch/arm64/configs/defconfig"
+	for cfg in $KERNEL_CONFIGS; do
+		[ -f "arch/arm64/configs/$cfg" ] || die "missing arch/arm64/configs/$cfg"
+		frags="$frags arch/arm64/configs/$cfg"
+	done
+	CONFIG_SOURCE="defconfig + $KERNEL_CONFIGS"
+	echo "merging: $CONFIG_SOURCE"
+	# The device fragments document this exact procedure in their own header:
+	#   scripts/kconfig/merge_config.sh arch/arm64/configs/defconfig <device>.config
+	# Start from a clean slate so the result does not depend on a stale .config
+	# in the checkout.
+	rm -f .config
+	# shellcheck disable=SC2086
+	scripts/kconfig/merge_config.sh -m $frags
+fi
 # shellcheck disable=SC2086
 make -s $KERNEL_MAKE_ARGS olddefconfig
 grep -E '^CONFIG_(LOCALVERSION|MODVERSIONS|MODULE_SIG|BLK_DEV_INITRD|INITRAMFS_FORCE)=' .config || true
+
+# `uname -r` on a device that was built from a git tree is usually not the bare
+# Makefile version (a tree that is not at a tag gets a trailing "+"), and the
+# module directory has to match it exactly or nothing loads.  Ask the tree
+# itself, and force CONFIG_LOCALVERSION if the profile says the flashed kernel
+# carries a suffix this checkout would not produce.
+# `include/config/kernel.release` is cached, so sync before trusting it.
+kernel_release() {
+	# shellcheck disable=SC2086
+	make -s $KERNEL_MAKE_ARGS syncconfig >/dev/null 2>&1 || true
+	# shellcheck disable=SC2086
+	make -s $KERNEL_MAKE_ARGS kernelrelease 2>/dev/null | tail -1
+}
+KVER="$(kernel_release)"
+[ -n "$KVER" ] || KVER="$KVER_MAKEFILE"
+if [ -n "${KERNEL_LOCALVERSION:-}" ]; then
+	case "$KVER" in
+		*"$KERNEL_LOCALVERSION")
+			echo "kernel release already carries '$KERNEL_LOCALVERSION': $KVER" ;;
+		*)
+			echo "pinning CONFIG_LOCALVERSION=\"$KERNEL_LOCALVERSION\" to match the flashed kernel"
+			printf 'CONFIG_LOCALVERSION="%s"\n' "$KERNEL_LOCALVERSION" >> .config
+			# shellcheck disable=SC2086
+			make -s $KERNEL_MAKE_ARGS olddefconfig
+			KVER="$(kernel_release)"
+			;;
+	esac
+fi
+echo "kernel release (module directory): $KVER"
 
 log "2. build modules"
 # shellcheck disable=SC2086
@@ -153,6 +226,17 @@ distro_configure "$ROOTFS" "$SUITE"
 log "4. install kernel modules"
 # shellcheck disable=SC2086
 make $KERNEL_MAKE_ARGS INSTALL_MOD_PATH="$ROOTFS" INSTALL_MOD_STRIP=1 modules_install
+# The directory modules_install actually used is the truth: if it differs from
+# what we expected, the image would boot without modules, so say so loudly.
+INSTALLED_MODULE_DIR="$(ls "$ROOTFS/lib/modules" 2>/dev/null | head -1)"
+if [ -n "$INSTALLED_MODULE_DIR" ] && [ "$INSTALLED_MODULE_DIR" != "$KVER" ]; then
+	echo "warning: modules went to /lib/modules/$INSTALLED_MODULE_DIR but the kernel" \
+	     "release was expected to be $KVER; using the real one"
+	KVER="$INSTALLED_MODULE_DIR"
+elif [ -z "$INSTALLED_MODULE_DIR" ]; then
+	die "no modules were installed into the rootfs"
+fi
+echo "modules installed for kernel release: $KVER"
 rm -f "$ROOTFS/lib/modules/$KVER/build" "$ROOTFS/lib/modules/$KVER/source"
 depmod -b "$ROOTFS" "$KVER" 2>/dev/null || echo "warning: depmod failed (will run on first boot)"
 
@@ -278,6 +362,21 @@ if [ "$MAKE_IMAGE" = "1" ]; then
 	fi
 fi
 
+# What the kernel has to report for these modules to be found: if `uname -r` on
+# the device differs from this, the modules will not load.
+cat > "$OUT/KERNEL-INFO-$DEVICE.txt" <<EOF
+device:          $DEVICE
+kernel branch:   $KERNEL_REF
+kernel release:  $KVER
+modules live in: /lib/modules/$KVER
+kernel config:   $CONFIG_SOURCE
+make args:       ${KERNEL_MAKE_ARGS:-<none>}
+local version:   ${KERNEL_LOCALVERSION:-<none>}
+
+check on the device:  uname -r     # must print $KVER
+EOF
+cat "$OUT/KERNEL-INFO-$DEVICE.txt"
+
 ( cd "$OUT" && sha256sum -- * > SHA256SUMS 2>/dev/null ) || true
 [ -f "$OUT/SHA256SUMS" ] && cat "$OUT/SHA256SUMS"
 
@@ -291,6 +390,7 @@ log "done"
 cat <<EOF
 device    : $DEVICE  ($PLATFORM_NAME)
 kernel    : $KERNEL_REF = $KVER
+config    : $CONFIG_SOURCE
 rootfs    : $DISTRO_NAME/$SUITE $ARCH
 userdata  : $USERDATA_PART (${NVDATA_PART:+nvdata $NVDATA_PART})
 timestamp : $TS
