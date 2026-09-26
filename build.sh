@@ -169,7 +169,13 @@ else
 		[ -f "arch/arm64/configs/$cfg" ] || die "missing arch/arm64/configs/$cfg"
 		frags="$frags arch/arm64/configs/$cfg"
 	done
-	CONFIG_SOURCE="defconfig + $KERNEL_CONFIGS"
+	# The branches' own defconfig enables MediaTek AFE drivers for other SoCs
+	# that do not compile there; the fixups switch them off (they are useless on
+	# MT6895).  A pinned full config already has them off and skips this.
+	if [ -f "$HERE/configs/mt6895-fixups.config" ]; then
+		frags="$frags $HERE/configs/mt6895-fixups.config"
+	fi
+	CONFIG_SOURCE="defconfig + $KERNEL_CONFIGS + fixups"
 	echo "merging: $CONFIG_SOURCE"
 	# The device fragments document this exact procedure in their own header:
 	#   scripts/kconfig/merge_config.sh arch/arm64/configs/defconfig <device>.config
@@ -203,7 +209,13 @@ if [ -n "${KERNEL_LOCALVERSION:-}" ]; then
 			echo "kernel release already carries '$KERNEL_LOCALVERSION': $KVER" ;;
 		*)
 			echo "pinning CONFIG_LOCALVERSION=\"$KERNEL_LOCALVERSION\" to match the flashed kernel"
-			printf 'CONFIG_LOCALVERSION="%s"\n' "$KERNEL_LOCALVERSION" >> .config
+			# merge rather than append: .config may already carry the symbol, and
+			# merge_config replaces the old value instead of duplicating it
+			lvfrag="$(mktemp)"
+			printf 'CONFIG_LOCALVERSION="%s"\n' "$KERNEL_LOCALVERSION" > "$lvfrag"
+			scripts/kconfig/merge_config.sh -m .config "$lvfrag" >/dev/null 2>&1 || \
+				printf 'CONFIG_LOCALVERSION="%s"\n' "$KERNEL_LOCALVERSION" >> .config
+			rm -f "$lvfrag"
 			# shellcheck disable=SC2086
 			make -s $KERNEL_MAKE_ARGS olddefconfig
 			KVER="$(kernel_release)"
@@ -212,7 +224,20 @@ if [ -n "${KERNEL_LOCALVERSION:-}" ]; then
 fi
 echo "kernel release (module directory): $KVER"
 
-log "2. build modules"
+log "2. build the kernel image"
+# `make modules` on its own cannot work in a fresh tree: modpost has no
+# vmlinux.symvers yet and reports every core symbol as undefined.  Building
+# vmlinux first produces it (and gives us the Image the modules belong to,
+# which is worth shipping next to them).
+# shellcheck disable=SC2086
+make -j"$JOBS" $KERNEL_MAKE_ARGS vmlinux
+KIMAGE="$KBOUT/arch/arm64/boot/Image"
+[ -f "$KIMAGE" ] || echo "warning: no Image at $KIMAGE"
+# best effort: some branches embed the DTB in the Image instead (pearl does)
+# shellcheck disable=SC2086
+make -j"$JOBS" $KERNEL_MAKE_ARGS dtbs >/dev/null 2>&1 || true
+
+log "2b. build modules"
 # shellcheck disable=SC2086
 make -j"$JOBS" $KERNEL_MAKE_ARGS modules
 
@@ -376,6 +401,16 @@ local version:   ${KERNEL_LOCALVERSION:-<none>}
 check on the device:  uname -r     # must print $KVER
 EOF
 cat "$OUT/KERNEL-INFO-$DEVICE.txt"
+
+# Ship the kernel these modules were built against, so the pair cannot be mixed
+# up.  The DTB may be embedded in the Image (the pearl branch does that).
+if [ -f "$KBOUT/arch/arm64/boot/Image" ]; then
+	cp "$KBOUT/arch/arm64/boot/Image" "$OUT/Image-$DEVICE"
+fi
+DTB="${DTS%.dts}.dtb"
+if [ -f "$KBOUT/arch/arm64/boot/dts/mediatek/$DTB" ]; then
+	cp "$KBOUT/arch/arm64/boot/dts/mediatek/$DTB" "$OUT/dtb-$DEVICE.dtb"
+fi
 
 ( cd "$OUT" && sha256sum -- * > SHA256SUMS 2>/dev/null ) || true
 [ -f "$OUT/SHA256SUMS" ] && cat "$OUT/SHA256SUMS"

@@ -246,6 +246,9 @@ jobs:
               echo "kernel config: defconfig + device fragment"
             fi
             echo "kernel release: see KERNEL-INFO-${DEVICE}.txt (uname -r must match)"
+            echo
+            echo "also attached: Image-${DEVICE} and, when the branch builds one,"
+            echo "dtb-${DEVICE}.dtb - the kernel the modules in this image belong to."
             echo "rootfs:        debian $SUITE arm64"
             echo "built:         $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
             echo "run:           ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
@@ -266,6 +269,8 @@ jobs:
             out/rootfs-*.img*
             out/BUILD-INFO-*.txt
             out/KERNEL-INFO-*.txt
+            out/Image-*
+            out/dtb-*
           if-no-files-found: error
           compression-level: 0
 
@@ -275,7 +280,7 @@ jobs:
   release:
     name: publish release
     needs: [prepare, build]
-    if: ${{ always() && !failure() && !cancelled() && (github.event_name == 'push' || inputs.publish_release) }}
+    if: ${{ always() && !cancelled() && (github.event_name == 'push' || inputs.publish_release) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -293,6 +298,7 @@ jobs:
         with:
           path: out
           merge-multiple: true
+        continue-on-error: true
 
       - name: Checksums and notes
         run: |
@@ -305,8 +311,14 @@ jobs:
             echo
             echo "Devices: ${{ inputs.devices || 'pearl xaga' }}"
             echo "Debian ${{ inputs.suite || 'trixie' }}, arm64.  Per-device details are"
-            echo "in the matching \`BUILD-INFO-<device>.txt\`."
+            echo "in the matching \`BUILD-INFO-<device>.txt\` and \`KERNEL-INFO-<device>.txt\`."
             echo
+            if [ "${{ needs.build.result }}" != "success" ]; then
+              echo "> Some device builds did not succeed (matrix result:"
+              echo "> \`${{ needs.build.result }}\`); this release contains the artifacts that"
+              echo "> were produced.  Check the run below for the failures."
+              echo
+            fi
             echo "Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo
             echo "### Flash"
@@ -325,6 +337,13 @@ jobs:
             echo '```'
             echo
             echo "The root filesystem grows to fill the userdata partition on first boot."
+            echo
+            echo "### Kernel"
+            echo
+            echo "The release also carries \`Image-<device>\` (and \`dtb-<device>.dtb\` where the"
+            echo "branch builds one separately) from the same config as the modules inside the"
+            echo "rootfs image, so the two can be flashed as a pair.  \`KERNEL-INFO-<device>.txt\`"
+            echo "records the kernel release the image expects."
             echo
             echo "### Firmware"
             echo
