@@ -1,0 +1,15 @@
+[Unit]
+Description=MT6895-Mainline first boot setup (resize rootfs, fresh identity)
+DefaultDependencies=no
+After=systemd-remount-fs.service local-fs.target
+Before=sysinit.target shutdown.target
+ConditionPathExists=!/var/lib/mt6895-firstboot-done
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/mt6895-firstboot
+
+[Install]
+WantedBy=sysinit.target

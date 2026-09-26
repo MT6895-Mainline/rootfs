@@ -1,0 +1,339 @@
+name: rootfs
+
+# MT6895-Mainline rootfs images.
+#
+# This repository holds the rootfs build system only; the kernel stays in
+# MT6895-Mainline/linux and is cloned per run at the branch each device pins.
+# Pearl lands first, xaga follows; the remaining devices are described in
+# devices/*.conf and only need the "devices" input.
+#
+# Vendor firmware is never built in: proprietary blobs are supplied by the
+# caller (firmware_url) and are not committed anywhere.
+#
+# Releases: a successful run publishes a permanent release tagged
+# build-<UTC timestamp> with the sparse rootfs images, SHA256SUMS and notes.
+# Pushing such a tag triggers the same run.
+on:
+  workflow_dispatch:
+    inputs:
+      devices:
+        description: "devices to build (space separated): pearl xaga xaga-6.18 qqcandy rubens"
+        required: true
+        default: "pearl xaga"
+      suite:
+        description: "Debian suite"
+        required: true
+        default: "trixie"
+      img_size:
+        description: "rootfs image size in GB (empty = size from the tree, grown on first boot)"
+        required: false
+        default: ""
+      hostname:
+        description: "hostname (empty = device name)"
+        required: false
+        default: ""
+      root_password:
+        description: "root password"
+        required: false
+        default: "root"
+      wifi_ssid:
+        description: "preseeded WiFi SSID (empty = none)"
+        required: false
+        default: ""
+      wifi_password:
+        description: "preseeded WiFi password"
+        required: false
+        default: ""
+      firmware_url:
+        description: "URL of a tarball with the vendor firmware (bring your own blobs)"
+        required: false
+        default: ""
+      publish_release:
+        description: "publish the result as a GitHub release"
+        required: false
+        default: true
+        type: boolean
+  push:
+    tags:
+      - "build-*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rootfs-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Normalise the parameters: timestamp + the device matrix
+  # ---------------------------------------------------------------------------
+  prepare:
+    name: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      ts: ${{ steps.vars.outputs.ts }}
+      matrix: ${{ steps.vars.outputs.matrix }}
+    steps:
+      - name: Compute timestamp and matrix
+        id: vars
+        env:
+          INPUT_DEVICES: ${{ inputs.devices }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "push" ]; then
+            ts="${REF_NAME#build-}"
+            devices="pearl xaga"
+          else
+            ts="$(date -u +'%Y%m%d-%H%M%S')"
+            devices="${INPUT_DEVICES:-pearl}"
+          fi
+          # device -> [profile, kernel branch, artifact tag]
+          all="pearl:7.2-mt6895-xiaomi-pearl:",
+          all="$all xaga:7.2-mt6895-xiaomi-xaga:"
+          all="$all xaga-6.18:6.18-mt6895-xiaomi-xaga:-6.18"
+          all="$all qqcandy:6.18-mt6895-oplus-qqcandy:"
+          all="$all rubens:port/rubens-clean:"
+          items=""
+          for want in $devices; do
+            found=""
+            for entry in $all; do
+              name="${entry%%:*}"
+              if [ "$name" = "$want" ]; then found="$entry"; break; fi
+            done
+            if [ -z "$found" ]; then
+              echo "::warning::unknown device '$want' (known: pearl xaga xaga-6.18 qqcandy rubens)" >&2
+              continue
+            fi
+            item="${found%%:*}"
+            rest="${found#*:}"
+            branch="${rest%%:*}"
+            tag="${rest#*:}"
+            items="${items}${items:+,}{\"device\":\"$item\",\"kernel_branch\":\"$branch\",\"tag\":\"$tag\"}"
+          done
+          if [ -z "$items" ]; then
+            echo "::error::no valid device selected"
+            exit 1
+          fi
+          echo "ts=$ts" >> "$GITHUB_OUTPUT"
+          echo "matrix={\"include\":[$items]}" >> "$GITHUB_OUTPUT"
+          echo "timestamp: $ts"
+          echo "matrix: {\"include\":[$items]}"
+
+  # ---------------------------------------------------------------------------
+  # Build one rootfs per selected device
+  # ---------------------------------------------------------------------------
+  build:
+    name: ${{ matrix.device }} rootfs
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    env:
+      TS: ${{ needs.prepare.outputs.ts }}
+      DEVICE: ${{ matrix.device }}
+      KREF: ${{ matrix.kernel_branch }}
+      SUITE: ${{ inputs.suite || 'trixie' }}
+      IMG_SIZE: ${{ inputs.img_size }}
+      HOSTNAME: ${{ inputs.hostname }}
+      ROOT_PASSWORD: ${{ inputs.root_password || 'root' }}
+      WIFI_SSID: ${{ inputs.wifi_ssid }}
+      WIFI_PASSWORD: ${{ inputs.wifi_password }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout kernel branch ${{ matrix.kernel_branch }}
+        uses: actions/checkout@v4
+        with:
+          repository: MT6895-Mainline/linux
+          ref: ${{ matrix.kernel_branch }}
+          path: linux
+          fetch-depth: 1
+
+      - name: Free disk space
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/share/swift /usr/local/.ghcup \
+                      /usr/local/share/boost || true
+          df -h / | tail -1
+
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            mmdebstrap qemu-user-static binfmt-support \
+            e2fsprogs android-sdk-libsparse-utils pigz zstd kmod rsync \
+            build-essential bc flex bison python3 \
+            clang lld llvm libssl-dev libelf-dev libncurses-dev dwarves \
+            git curl ca-certificates xz-utils
+          sudo update-binfmts --enable qemu-aarch64 || true
+          ls -l /proc/sys/fs/binfmt_misc/qemu-aarch64 || echo "::warning::no qemu-aarch64 binfmt"
+          sudo git config --system --add safe.directory "*"
+          clang --version | head -1
+
+      - name: Fetch vendor firmware (bring your own blobs)
+        id: firmware
+        if: inputs.firmware_url != ''
+        run: |
+          set -euo pipefail
+          mkdir -p firmware
+          curl -fL --retry 3 -o firmware.tar "${{ inputs.firmware_url }}"
+          tar -xf firmware.tar -C firmware --strip-components=1
+          du -sh firmware || true
+          echo "dir=$PWD/firmware" >> "$GITHUB_OUTPUT"
+
+      - name: Build rootfs
+        env:
+          FIRMWARE_DIR: ${{ steps.firmware.outputs.dir }}
+          TAG: ${{ matrix.tag }}
+        run: |
+          set -eux
+          args=(--device "$DEVICE" --suite "$SUITE" --ts "$TS"
+                --kernel-repo "$PWD/linux" --kernel-ref "$KREF"
+                --jobs "$(nproc)" --out "$PWD/out")
+          [ -n "${IMG_SIZE:-}" ] && args+=(--img-size "${IMG_SIZE}G")
+          [ -n "${HOSTNAME:-}" ] && args+=(--hostname "$HOSTNAME")
+          [ -n "${ROOT_PASSWORD:-}" ] && args+=(--root-password "$ROOT_PASSWORD")
+          [ -n "${WIFI_SSID:-}" ] && args+=(--wifi-ssid "$WIFI_SSID" --wifi-password "$WIFI_PASSWORD")
+          [ -n "${FIRMWARE_DIR:-}" ] && args+=(--firmware "$FIRMWARE_DIR")
+          [ -n "${TAG:-}" ] && args+=(--name-suffix "$TAG")
+          sudo -E ./build.sh "${args[@]}"
+
+      - name: Build info
+        run: |
+          set -euo pipefail
+          cd out
+          {
+            echo "MT6895-Mainline rootfs"
+            echo "device:        $DEVICE"
+            echo "kernel branch: $KREF"
+            echo "rootfs:        debian $SUITE arm64"
+            echo "built:         $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+            echo "run:           ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo
+            echo "flash:"
+            echo "  gunzip -c rootfs-${DEVICE}${{ matrix.tag }}-${TS}-sparse.img.gz | fastboot flash userdata -"
+            echo "  fastboot reboot"
+            echo
+            echo "on first boot the root filesystem grows to fill the userdata partition."
+          } > "BUILD-INFO-$DEVICE.txt"
+          ls -lh
+
+      - name: Upload rootfs artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rootfs-${{ matrix.device }}
+          path: |
+            out/rootfs-*.img*
+            out/BUILD-INFO-*.txt
+          if-no-files-found: error
+          compression-level: 0
+
+  # ---------------------------------------------------------------------------
+  # Collect + publish a permanent release (tag build-<ts>)
+  # ---------------------------------------------------------------------------
+  release:
+    name: publish release
+    needs: [prepare, build]
+    if: ${{ always() && !failure() && !cancelled() && (github.event_name == 'push' || inputs.publish_release) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TS: ${{ needs.prepare.outputs.ts }}
+    steps:
+      # gh release needs a git repository context
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Checksums and notes
+        run: |
+          set -euo pipefail
+          cd out
+          ls -lh
+          sha256sum -- * > SHA256SUMS
+          {
+            echo "## MT6895-Mainline rootfs \`$TS\`"
+            echo
+            echo "Devices: ${{ inputs.devices || 'pearl xaga' }}"
+            echo "Debian ${{ inputs.suite || 'trixie' }}, arm64.  Per-device details are"
+            echo "in the matching \`BUILD-INFO-<device>.txt\`."
+            echo
+            echo "Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo
+            echo "### Flash"
+            echo
+            echo '```bash'
+            echo "# rootfs lives in the userdata partition"
+            echo "gunzip -c rootfs-<device>-<ts>-sparse.img.gz | fastboot flash userdata -"
+            echo "fastboot reboot"
+            echo '```'
+            echo
+            echo "Images larger than 2GB are split because GitHub limits release files to"
+            echo "2GB; rejoin them first:"
+            echo
+            echo '```bash'
+            echo "cat rootfs-<device>-<ts>-sparse.img.gz.part-* > rootfs-<device>-<ts>-sparse.img.gz"
+            echo '```'
+            echo
+            echo "The root filesystem grows to fill the userdata partition on first boot."
+            echo
+            echo "### Firmware"
+            echo
+            echo "Vendor firmware is not distributed with these images.  Extract it from"
+            echo "your own device with \`tools/extract-firmware.sh\` and install it with"
+            echo "\`tools/install-firmware.sh\` (or pass \`firmware_url\` on the next build)."
+          } > NOTES.md
+          cat NOTES.md
+
+      - name: Publish release
+        run: |
+          set -euo pipefail
+          tag="build-$TS"
+          repo="${{ github.repository }}"
+          # GitHub refuses release files of 2GB and larger; those stay available
+          # as workflow artifacts and are left out of the release.
+          files=()
+          skipped=0
+          for f in out/*; do
+            [ -f "$f" ] || continue
+            case "$f" in
+              */NOTES.md) continue ;;
+            esac
+            if [ "$(stat -c%s "$f")" -ge 2000000000 ]; then
+              echo "too large for a release, keeping it in the workflow artifacts: $f"
+              skipped=$((skipped + 1))
+              continue
+            fi
+            files+=("$f")
+          done
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::no file is small enough to publish (all >= 2GB)"
+            exit 1
+          fi
+          echo "publishing ${#files[@]} file(s), skipped ${skipped}:"
+          printf '  %s\n' "${files[@]}"
+          if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
+            gh release upload "$tag" "${files[@]}" --repo "$repo" --clobber
+          else
+            gh release create "$tag" "${files[@]}" --repo "$repo" \
+              --title "MT6895-Mainline rootfs $TS" \
+              --notes-file out/NOTES.md
+          fi
+          echo "release: ${{ github.server_url }}/$repo/releases/tag/$tag"
