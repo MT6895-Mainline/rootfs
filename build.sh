@@ -26,7 +26,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 DEVICE=""
 DISTRO="debian"
-SUITE="trixie"
+SUITE=""
 ARCH="arm64"
 MIRROR=""
 OUT="$HERE/out"
@@ -47,7 +47,11 @@ STAGE_ROOTFS=0
 KEEP_WORK="${KEEP_WORK:-0}"
 NAME_SUFFIX="${NAME_SUFFIX:-}"
 HOSTNAME_OVERRIDE=""
-ROOT_PASSWORD="root"
+ROOT_PASSWORD="${ROOT_PASSWORD:-}"
+USER_PASSWORD="${USER_PASSWORD:-1234}"
+UI=phosh
+ROOTFS_ONLY=0
+VAAPI=auto
 WIFI_SSID=""
 WIFI_PASSWORD=""
 # Kernel make arguments, e.g. "LLVM=1" for clang builds (profile sets it).
@@ -75,6 +79,9 @@ while [ $# -gt 0 ]; do
 		--device) DEVICE="${2:?}"; shift 2 ;;
 		--distro) DISTRO="${2:?}"; shift 2 ;;
 		--suite) SUITE="${2:?}"; shift 2 ;;
+		--ui) UI="${2:?}"; shift 2 ;;
+		--rootfs-only) ROOTFS_ONLY=1; MAKE_IMAGE=0; shift ;;
+		--vaapi) VAAPI="${2:?}"; shift 2 ;;
 		--mirror) MIRROR="${2:?}"; shift 2 ;;
 		--out) OUT="${2:?}"; shift 2 ;;
 		--ts) TS="${2:?}"; shift 2 ;;
@@ -88,6 +95,7 @@ while [ $# -gt 0 ]; do
 		--img-size) IMG_SIZE="${2:?}"; shift 2 ;;
 		--hostname) HOSTNAME_OVERRIDE="${2:?}"; shift 2 ;;
 		--root-password) ROOT_PASSWORD="${2:?}"; shift 2 ;;
+		--user-password) USER_PASSWORD="${2:?}"; shift 2 ;;
 		--wifi-ssid) WIFI_SSID="${2:?}"; shift 2 ;;
 		--wifi-password) WIFI_PASSWORD="${2:?}"; shift 2 ;;
 		--name-suffix) NAME_SUFFIX="${2:?}"; shift 2 ;;
@@ -100,7 +108,15 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
+for value in "$ROOT_PASSWORD" "$USER_PASSWORD" "$WIFI_SSID" "$WIFI_PASSWORD"; do
+	[[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || die "credentials must be single-line"
+done
+
 [ -n "$DEVICE" ] || die "--device is required (see devices/*.conf)"
+[[ "$DEVICE" =~ ^[a-z0-9-]+$ && "$DISTRO" =~ ^[a-z0-9-]+$ ]] || die "invalid profile name"
+case "$UI" in console|phosh) ;; *) die "--ui must be console or phosh" ;; esac
+case "$VAAPI" in auto|on|off) ;; *) die "--vaapi must be auto, on or off" ;; esac
+[[ "$TS" =~ ^[0-9-]+$ && "$JOBS" =~ ^[1-9][0-9]*$ ]] || die "invalid timestamp/jobs"
 [ -f "$HERE/devices/$DEVICE.conf" ] || die "no profile for device '$DEVICE'"
 [ -f "$HERE/distros/$DISTRO.sh" ] || die "no distro backend 'distros/$DISTRO.sh'"
 
@@ -126,22 +142,37 @@ fi
 # --kernel-localversion overrides it (also used to clear it).
 KERNEL_LOCALVERSION="${KERNEL_LOCALVERSION_ARG:-${KERNEL_LOCALVERSION:-}}"
 
-for tool in mmdebstrap mkfs.ext4 zstd du findmnt depmod; do
+[ "$(id -u)" = "0" ] || die "must run as root"
+if [ "$ROOTFS_ONLY" = 0 ]; then
+	[ -n "$KERNEL_REPO" ] || die "--kernel-repo (or \$KERNEL_REPO) is required"
+	git -C "$KERNEL_REPO" rev-parse --is-inside-work-tree >/dev/null ||
+		die "kernel repo '$KERNEL_REPO' is not a git checkout"
+	KERNEL_REPO="$(realpath "$KERNEL_REPO")"
+fi
+
+# Distro backends declare their host tools and own the bootstrap/configure
+# contract. This keeps the kernel/module/image path shared across distros.
+. "$HERE/distros/$DISTRO.sh"
+SUITE="${SUITE:-$DISTRO_DEFAULT_SUITE}"
+[[ "$SUITE" =~ ^[a-z0-9.-]+$ && "$HOSTNAME_OVERRIDE" =~ ^[a-zA-Z0-9.-]+$ ]] ||
+	die "invalid suite or hostname"
+[[ "$DEFAULT_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || die "invalid default user"
+: "${DISTRO_HOST_TOOLS:?distro backend must set DISTRO_HOST_TOOLS}"
+for tool in mkfs.ext4 zstd du findmnt depmod git $DISTRO_HOST_TOOLS; do
 	command -v "$tool" >/dev/null 2>&1 || die "missing host tool: $tool"
 done
-[ "$(id -u)" = "0" ] || die "must run as root"
-[ -n "$KERNEL_REPO" ] || die "--kernel-repo (or \$KERNEL_REPO) is required"
-[ -d "$KERNEL_REPO/.git" ] || die "kernel repo '$KERNEL_REPO' is not a git checkout"
 
-WORK="$OUT/.work-$DEVICE-$DISTRO_NAME"
+mkdir -p "$OUT"
+OUT="$(realpath "$OUT")"
+WORK="$(mktemp -d "$OUT/.work-$DEVICE-$DISTRO_NAME.XXXXXX")"
 ROOTFS="$WORK/rootfs"
 KBOUT="$WORK/kernel"
 # the device name is part of the image name: several devices are built in one
 # run and their artifacts are collected into a single release
-STUB="rootfs-$DEVICE$NAME_SUFFIX-$TS"
+STUB="rootfs-$DEVICE-$DISTRO_NAME$NAME_SUFFIX-$TS"
+[ "$ROOTFS_ONLY" = 0 ] || STUB="userspace-only-$DEVICE-$DISTRO_NAME-$TS"
 BASE="$STUB.img"
 IMGF="$OUT/$BASE"
-rm -rf "$WORK"
 mkdir -p "$ROOTFS" "$KBOUT" "$OUT"
 # The script runs as root, but later CI steps (build info) write into --out as
 # the invoking user, so hand the directory over when sudo tells us who that is.
@@ -150,7 +181,11 @@ if [ -n "${SUDO_UID:-}" ] && [ -n "${SUDO_GID:-}" ]; then
 fi
 
 # ---------------------------------------------------------------- kernel modules
+KVER=none
+CONFIG_SOURCE=none
+if [ "$ROOTFS_ONLY" = 0 ]; then
 log "0. kernel '$KERNEL_REF' from $KERNEL_REPO"
+KERNEL_COMMIT="$(git -C "$KERNEL_REPO" rev-parse "$KERNEL_REF^{commit}")"
 KVER_MAKEFILE="$(git -C "$KERNEL_REPO" show "$KERNEL_REF:Makefile" 2>/dev/null \
 	| awk -F' = ' '/^(VERSION|PATCHLEVEL|SUBLEVEL) =/{printf "%s%s", sep, $2; sep="."}')"
 [ -n "$KVER_MAKEFILE" ] || die "cannot determine kernel version for $KERNEL_REF"
@@ -194,6 +229,11 @@ else
 fi
 # shellcheck disable=SC2086
 make -s $KERNEL_MAKE_ARGS olddefconfig
+if ! grep -q '^CONFIG_EXTRA_FIRMWARE=""' .config && grep -q '^CONFIG_EXTRA_FIRMWARE=' .config; then
+	[ -n "$FIRMWARE_DIR" ] || die "kernel embeds firmware; supply --firmware or a source-only --kernel-config"
+	scripts/config --set-str EXTRA_FIRMWARE_DIR "$(realpath "$FIRMWARE_DIR")"
+	make -s $KERNEL_MAKE_ARGS olddefconfig
+fi
 grep -E '^CONFIG_(LOCALVERSION|MODVERSIONS|MODULE_SIG|BLK_DEV_INITRD|INITRAMFS_FORCE)=' .config || true
 
 # `uname -r` on a device that was built from a git tree is usually not the bare
@@ -204,7 +244,7 @@ grep -E '^CONFIG_(LOCALVERSION|MODVERSIONS|MODULE_SIG|BLK_DEV_INITRD|INITRAMFS_F
 # `include/config/kernel.release` is cached, so sync before trusting it.
 kernel_release() {
 	# shellcheck disable=SC2086
-	make -s $KERNEL_MAKE_ARGS syncconfig >/dev/null 2>&1 || true
+	make -s $KERNEL_MAKE_ARGS syncconfig >/dev/null
 	# shellcheck disable=SC2086
 	make -s $KERNEL_MAKE_ARGS kernelrelease 2>/dev/null | tail -1
 }
@@ -237,25 +277,24 @@ log "2. build the kernel image"
 # vmlinux first produces it (and gives us the Image the modules belong to,
 # which is worth shipping next to them).
 # shellcheck disable=SC2086
-make -j"$JOBS" $KERNEL_MAKE_ARGS vmlinux
+make -j"$JOBS" $KERNEL_MAKE_ARGS Image
 KIMAGE="$KBOUT/arch/arm64/boot/Image"
-[ -f "$KIMAGE" ] || echo "warning: no Image at $KIMAGE"
-# best effort: some branches embed the DTB in the Image instead (pearl does)
+[ -s "$KIMAGE" ] || die "kernel Image missing"
 # shellcheck disable=SC2086
-make -j"$JOBS" $KERNEL_MAKE_ARGS dtbs >/dev/null 2>&1 || true
+make -j"$JOBS" $KERNEL_MAKE_ARGS "mediatek/${DTS%.dts}.dtb"
 
 log "2b. build modules"
 # shellcheck disable=SC2086
 make -j"$JOBS" $KERNEL_MAKE_ARGS modules
+fi
 
 # ---------------------------------------------------------------- userspace
 log "3. bootstrap $DISTRO_NAME/$SUITE ($ARCH)"
-# shellcheck source=/dev/null
-. "$HERE/distros/$DISTRO_NAME.sh"
 distro_bootstrap "$ROOTFS" "$SUITE" "$ARCH" "$MIRROR" "$JOBS"
 distro_configure "$ROOTFS" "$SUITE"
 
 log "4. install kernel modules"
+if [ "$ROOTFS_ONLY" = 0 ]; then
 # With LLVM=1 the kernel strips modules with llvm-strip; if the tool is absent,
 # ship them unstripped rather than failing after a long build.
 MOD_STRIP=1
@@ -272,15 +311,51 @@ make $KERNEL_MAKE_ARGS INSTALL_MOD_PATH="$ROOTFS" ${MOD_STRIP:+INSTALL_MOD_STRIP
 # what we expected, the image would boot without modules, so say so loudly.
 INSTALLED_MODULE_DIR="$(ls "$ROOTFS/lib/modules" 2>/dev/null | head -1)"
 if [ -n "$INSTALLED_MODULE_DIR" ] && [ "$INSTALLED_MODULE_DIR" != "$KVER" ]; then
-	echo "warning: modules went to /lib/modules/$INSTALLED_MODULE_DIR but the kernel" \
-	     "release was expected to be $KVER; using the real one"
-	KVER="$INSTALLED_MODULE_DIR"
+	die "modules directory $INSTALLED_MODULE_DIR != kernel release $KVER"
 elif [ -z "$INSTALLED_MODULE_DIR" ]; then
 	die "no modules were installed into the rootfs"
 fi
 echo "modules installed for kernel release: $KVER"
 rm -f "$ROOTFS/lib/modules/$KVER/build" "$ROOTFS/lib/modules/$KVER/source"
-depmod -b "$ROOTFS" "$KVER" 2>/dev/null || echo "warning: depmod failed (will run on first boot)"
+depmod -b "$ROOTFS" "$KVER"
+fi
+
+# ---------------------------------------------------------------- optional userspace components
+install_vaapi_driver() {
+	local repo="${VAAPI_REPO:-}" commit="${VAAPI_COMMIT:-}"
+	local src="$WORK/vaapi-mtk-vcp"
+	[ "$VAAPI" != off ] || return 0
+	[ "$VAAPI" != on ] || [ -n "$repo" ] || die "profile has no VAAPI_REPO"
+	[ -n "$repo" ] || return 0
+	[ -n "$commit" ] || die "VAAPI_COMMIT is required when VAAPI_REPO is set"
+	distro_install_packages "$ROOTFS" "${VAAPI_BUILD_PACKAGES:-}"
+	git clone --filter=blob:none --no-checkout "$repo" "$src"
+	git -C "$src" checkout --detach "$commit"
+	[ "$(git -C "$src" rev-parse HEAD)" = "$commit" ] ||
+		die "VA-API source did not resolve to pinned commit"
+	install -d "$ROOTFS/usr/src/vaapi-mtk-vcp"
+	git -C "$src" archive HEAD | tar -x -C "$ROOTFS/usr/src/vaapi-mtk-vcp"
+	distro_chroot "$ROOTFS" /bin/sh -c \
+		"cd /usr/src/vaapi-mtk-vcp && make -j${JOBS}"
+	local driverdir
+	driverdir="$(distro_chroot "$ROOTFS" pkg-config --variable=libdir libva)/dri"
+	[[ "$driverdir" = /usr/lib* && "$driverdir" != *..* ]] ||
+		die "invalid libva driver directory: $driverdir"
+	install -d -m 0755 "$ROOTFS$driverdir"
+	install -m 0755 "$ROOTFS/usr/src/vaapi-mtk-vcp/mtk_vcp_drv_video.so" \
+		"$ROOTFS$driverdir/mtk_vcp_drv_video.so"
+	rm -rf "$ROOTFS/usr/src/vaapi-mtk-vcp"
+	install -d "$ROOTFS/usr/share/mt6895-build"
+	printf '%s\n%s\n' "$repo" "$commit" > "$ROOTFS/usr/share/mt6895-build/vaapi-source"
+}
+
+install_vaapi_driver
+
+if [ -n "${QUIRKS_REPO:-}" ]; then
+	git clone --filter=blob:none "$QUIRKS_REPO" "$WORK/quirks"
+	git -C "$WORK/quirks" checkout --detach "${QUIRKS_COMMIT:?profile must pin quirks}"
+	make -C "$WORK/quirks" DEVICE="$DEVICE" DESTDIR="$ROOTFS" install
+fi
 
 # ---------------------------------------------------------------- overlay
 log "5. overlay (common + $DEVICE)"
@@ -314,13 +389,11 @@ LABEL=$ROOTFS_LABEL	/	ext4	defaults,noatime,errors=remount-ro	0 1
 EOF
 
 DEFAULT_USER="${DEFAULT_USER:-mobian}"
-if [ -n "$DEFAULT_USER" ] && [ -d "$ROOTFS/home/$DEFAULT_USER" ]; then
-	echo "$DEFAULT_USER ALL=(ALL:ALL) NOPASSWD:ALL" > "$ROOTFS/etc/sudoers.d/010-$DEFAULT_USER"
-	chmod 0440 "$ROOTFS/etc/sudoers.d/010-$DEFAULT_USER"
-fi
 if [ -n "$ROOT_PASSWORD" ]; then
-	chroot "$ROOTFS" /bin/sh -c "echo 'root:$ROOT_PASSWORD' | chpasswd" || \
-		echo "warning: could not set the root password"
+	printf 'root:%s\n' "$ROOT_PASSWORD" | distro_chroot "$ROOTFS" chpasswd
+fi
+if [ -n "$USER_PASSWORD" ]; then
+	printf '%s:%s\n' "$DEFAULT_USER" "$USER_PASSWORD" | distro_chroot "$ROOTFS" chpasswd
 fi
 
 if [ -n "$WIFI_SSID" ]; then
@@ -363,6 +436,7 @@ fi
 
 # ---------------------------------------------------------------- finalise
 log "8. finalise"
+distro_finalize "$ROOTFS"
 rm -rf "$ROOTFS/var/cache/apt"/* "$ROOTFS/var/lib/apt/lists"/* 2>/dev/null || true
 rm -rf "$ROOTFS/tmp"/* 2>/dev/null || true
 install -d -m 1777 "$ROOTFS/tmp" "$ROOTFS/var/tmp"
@@ -406,8 +480,10 @@ fi
 
 # What the kernel has to report for these modules to be found: if `uname -r` on
 # the device differs from this, the modules will not load.
-cat > "$OUT/KERNEL-INFO-$DEVICE.txt" <<EOF
+cat > "$OUT/KERNEL-INFO-$DEVICE$NAME_SUFFIX-$DISTRO_NAME.txt" <<EOF
 device:          $DEVICE
+distribution:    $DISTRO_NAME/$SUITE
+kernel commit:   ${KERNEL_COMMIT:-none (userspace-only, not deployable)}
 kernel branch:   $KERNEL_REF
 kernel release:  $KVER
 modules live in: /lib/modules/$KVER
@@ -417,19 +493,20 @@ local version:   ${KERNEL_LOCALVERSION:-<none>}
 
 check on the device:  uname -r     # must print $KVER
 EOF
-cat "$OUT/KERNEL-INFO-$DEVICE.txt"
+cat "$OUT/KERNEL-INFO-$DEVICE$NAME_SUFFIX-$DISTRO_NAME.txt"
 
 # Ship the kernel these modules were built against, so the pair cannot be mixed
 # up.  The DTB may be embedded in the Image (the pearl branch does that).
 if [ -f "$KBOUT/arch/arm64/boot/Image" ]; then
-	cp "$KBOUT/arch/arm64/boot/Image" "$OUT/Image-$DEVICE"
+	cp "$KBOUT/arch/arm64/boot/Image" "$OUT/Image-$DEVICE$NAME_SUFFIX-$DISTRO_NAME"
 fi
 DTB="${DTS%.dts}.dtb"
 if [ -f "$KBOUT/arch/arm64/boot/dts/mediatek/$DTB" ]; then
-	cp "$KBOUT/arch/arm64/boot/dts/mediatek/$DTB" "$OUT/dtb-$DEVICE.dtb"
+	cp "$KBOUT/arch/arm64/boot/dts/mediatek/$DTB" "$OUT/dtb-$DEVICE$NAME_SUFFIX-$DISTRO_NAME.dtb"
 fi
 
-( cd "$OUT" && sha256sum -- * > SHA256SUMS 2>/dev/null ) || true
+( cd "$OUT" && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' |
+	sort -z | xargs -0 -r sha256sum > SHA256SUMS )
 [ -f "$OUT/SHA256SUMS" ] && cat "$OUT/SHA256SUMS"
 
 if [ "$STAGE_ROOTFS" = "1" ]; then
@@ -439,6 +516,7 @@ elif [ "$KEEP_WORK" != "1" ]; then
 fi
 
 log "done"
+[ "$ROOTFS_ONLY" = 0 ] || { echo "userspace-only validation complete; no kernel or flashable image"; exit 0; }
 cat <<EOF
 device    : $DEVICE  ($PLATFORM_NAME)
 kernel    : $KERNEL_REF = $KVER
@@ -447,8 +525,6 @@ rootfs    : $DISTRO_NAME/$SUITE $ARCH
 userdata  : $USERDATA_PART (${NVDATA_PART:+nvdata $NVDATA_PART})
 timestamp : $TS
 
-flash:
-  fastboot flash userdata $(basename "$IMGF")${IMGF:+}
-  fastboot reboot
-first boot resizes the filesystem to fill the partition.
+Deployment erases userdata. Use the device-specific boot/recovery procedure.
+This builder never flashes partitions. Keep Image, DTB and modules as a pair.
 EOF

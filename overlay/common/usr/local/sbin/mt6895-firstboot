@@ -14,7 +14,7 @@ if [ -n "$ROOT" ] && [ -b "$ROOT" ]; then
 	fi
 fi
 
-if [ ! -s /etc/machine-id ]; then
+if [ ! -s /etc/machine-id ] && command -v systemd-machine-id-setup >/dev/null 2>&1; then
 	systemd-machine-id-setup || true
 fi
 

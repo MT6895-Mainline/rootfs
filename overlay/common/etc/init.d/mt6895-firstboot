@@ -1,0 +1,12 @@
+#!/sbin/openrc-run
+description="Initialize the MT6895 root filesystem"
+
+depend() {
+	need localmount
+	before sshd greetd
+}
+
+start() {
+	[ ! -e /var/lib/mt6895-firstboot-done ] || return 0
+	/usr/local/sbin/mt6895-firstboot
+}

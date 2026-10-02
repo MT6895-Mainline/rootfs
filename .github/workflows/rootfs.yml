@@ -1,409 +1,129 @@
 name: rootfs
-
-# MT6895-Mainline rootfs images.
-#
-# This repository holds the rootfs build system only; the kernel stays in
-# MT6895-Mainline/linux and is cloned per run at the branch each device pins.
-# Pearl lands first, xaga follows; the remaining devices are described in
-# devices/*.conf and only need the "devices" input.
-#
-# Vendor firmware is never built in: proprietary blobs are supplied by the
-# caller (firmware_url) and are not committed anywhere.
-#
-# Releases: a successful run publishes a permanent release tagged
-# build-<UTC timestamp> with the sparse rootfs images, SHA256SUMS and notes.
-# Pushing such a tag triggers the same run.
 on:
   workflow_dispatch:
     inputs:
       devices:
-        description: "devices to build (space separated): pearl xaga xaga-6.18 qqcandy rubens"
+        description: "Space-separated: qqcandy pearl xaga xaga-6.18 rubens"
+        default: "qqcandy"
         required: true
-        default: "pearl xaga"
-      suite:
-        description: "Debian suite"
+      distros:
+        description: "Space-separated: mobian arch nura debian"
+        default: "mobian arch nura"
         required: true
-        default: "trixie"
-      img_size:
-        description: "rootfs image size in GB (empty = size from the tree, grown on first boot)"
-        required: false
-        default: ""
-      hostname:
-        description: "hostname (empty = device name)"
-        required: false
-        default: ""
-      root_password:
-        description: "root password"
-        required: false
-        default: "root"
-      wifi_ssid:
-        description: "preseeded WiFi SSID (empty = none)"
-        required: false
-        default: ""
-      wifi_password:
-        description: "preseeded WiFi password"
-        required: false
-        default: ""
-      firmware_url:
-        description: "URL of a tarball with the vendor firmware (bring your own blobs)"
-        required: false
-        default: ""
-      kernel_config_url:
-        description: "URL of the exact .config the boot image was built with (empty = defconfig + device fragment)"
-        required: false
-        default: ""
-      kernel_localversion:
-        description: "suffix the flashed kernel reports in uname -r, e.g. + (empty = use the device profile)"
-        required: false
-        default: ""
-      publish_release:
-        description: "publish the result as a GitHub release"
-        required: false
-        default: true
+      ui:
+        description: "User interface"
+        type: choice
+        options: [phosh, console]
+        default: phosh
+      userspace_only:
+        description: "Validate userspace only (no deployable kernel/image)"
         type: boolean
-  push:
-    tags:
-      - "build-*"
+        default: false
+      publish_release:
+        description: "Publish only after all selected builds succeed"
+        type: boolean
+        default: false
 
 permissions:
-  contents: write
-
+  contents: read
 concurrency:
   group: rootfs-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # Normalise the parameters: timestamp + the device matrix
-  # ---------------------------------------------------------------------------
   prepare:
-    name: prepare
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
     outputs:
-      ts: ${{ steps.vars.outputs.ts }}
-      matrix: ${{ steps.vars.outputs.matrix }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      ts: ${{ steps.matrix.outputs.ts }}
     steps:
-      - name: Compute timestamp and matrix
-        id: vars
+      - uses: actions/checkout@v4
+      - id: matrix
         env:
-          INPUT_DEVICES: ${{ inputs.devices }}
-          REF_NAME: ${{ github.ref_name }}
-          EVENT: ${{ github.event_name }}
+          DEVICES: ${{ inputs.devices }}
+          DISTROS: ${{ inputs.distros }}
         run: |
-          set -euo pipefail
-          if [ "$EVENT" = "push" ]; then
-            ts="${REF_NAME#build-}"
-            devices="pearl xaga"
-          else
-            ts="$(date -u +'%Y%m%d-%H%M%S')"
-            devices="${INPUT_DEVICES:-pearl}"
-          fi
-          # device -> [profile, kernel branch, artifact tag]
-          all="pearl:7.2-mt6895-xiaomi-pearl:",
-          all="$all xaga:7.2-mt6895-xiaomi-xaga:"
-          all="$all xaga-6.18:6.18-mt6895-xiaomi-xaga:-6.18"
-          all="$all qqcandy:6.18-mt6895-oplus-qqcandy:"
-          all="$all rubens:port/rubens-clean:"
-          items=""
-          for want in $devices; do
-            found=""
-            for entry in $all; do
-              name="${entry%%:*}"
-              if [ "$name" = "$want" ]; then found="$entry"; break; fi
-            done
-            if [ -z "$found" ]; then
-              echo "::warning::unknown device '$want' (known: pearl xaga xaga-6.18 qqcandy rubens)" >&2
-              continue
-            fi
-            item="${found%%:*}"
-            rest="${found#*:}"
-            branch="${rest%%:*}"
-            tag="${rest#*:}"
-            items="${items}${items:+,}{\"device\":\"$item\",\"kernel_branch\":\"$branch\",\"tag\":\"$tag\"}"
-          done
-          if [ -z "$items" ]; then
-            echo "::error::no valid device selected"
-            exit 1
-          fi
-          echo "ts=$ts" >> "$GITHUB_OUTPUT"
-          echo "matrix={\"include\":[$items]}" >> "$GITHUB_OUTPUT"
-          echo "timestamp: $ts"
-          echo "matrix: {\"include\":[$items]}"
-
-  # ---------------------------------------------------------------------------
-  # Build one rootfs per selected device
-  # ---------------------------------------------------------------------------
+          python3 tools/matrix.py "$DEVICES" "$DISTROS" >> "$GITHUB_OUTPUT"
+          echo "ts=$(date -u +%Y%m%d-%H%M%S)" >> "$GITHUB_OUTPUT"
   build:
-    name: ${{ matrix.device }} rootfs
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
-    env:
-      TS: ${{ needs.prepare.outputs.ts }}
-      DEVICE: ${{ matrix.device }}
-      KREF: ${{ matrix.kernel_branch }}
-      SUITE: ${{ inputs.suite || 'trixie' }}
-      IMG_SIZE: ${{ inputs.img_size }}
-      HOSTNAME: ${{ inputs.hostname }}
-      ROOT_PASSWORD: ${{ inputs.root_password || 'root' }}
-      WIFI_SSID: ${{ inputs.wifi_ssid }}
-      WIFI_PASSWORD: ${{ inputs.wifi_password }}
+    name: ${{ matrix.variant }} / ${{ matrix.distro }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Checkout kernel branch ${{ matrix.kernel_branch }}
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        if: inputs.userspace_only == false
         with:
           repository: MT6895-Mainline/linux
-          ref: ${{ matrix.kernel_branch }}
+          ref: ${{ matrix.kernel }}
           path: linux
-          fetch-depth: 1
-
-      - name: Free disk space
+      - name: Dependencies
         run: |
-          set -euo pipefail
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-                      /opt/hostedtoolcache/CodeQL /usr/share/swift /usr/local/.ghcup \
-                      /usr/local/share/boost || true
-          df -h / | tail -1
-
-      - name: Install build dependencies
-        run: |
-          set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            mmdebstrap qemu-user-static binfmt-support \
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mmdebstrap arch-test \
+            qemu-user-static binfmt-support libarchive-tools gnupg \
             e2fsprogs android-sdk-libsparse-utils pigz zstd kmod rsync \
-            build-essential bc flex bison python3 \
-            clang lld llvm binutils-aarch64-linux-gnu \
-            libssl-dev libelf-dev libncurses-dev dwarves \
-            git curl ca-certificates xz-utils
-          sudo update-binfmts --enable qemu-aarch64 || true
-          ls -l /proc/sys/fs/binfmt_misc/qemu-aarch64 || echo "::warning::no qemu-aarch64 binfmt"
-          sudo git config --system --add safe.directory "*"
-          clang --version | head -1
-
-      - name: Fetch vendor firmware (bring your own blobs)
-        id: firmware
-        if: inputs.firmware_url != ''
-        run: |
-          set -euo pipefail
-          mkdir -p firmware
-          curl -fL --retry 3 -o firmware.tar "${{ inputs.firmware_url }}"
-          tar -xf firmware.tar -C firmware --strip-components=1
-          du -sh firmware || true
-          echo "dir=$PWD/firmware" >> "$GITHUB_OUTPUT"
-
-      - name: Fetch the kernel config to match
-        id: kconfig
-        if: inputs.kernel_config_url != ''
-        run: |
-          set -euo pipefail
-          curl -fL --retry 3 -o kernel.config "${{ inputs.kernel_config_url }}"
-          # guard: a stray HTML error page would silently become a .config
-          grep -qE '^CONFIG_[A-Z0-9_]+=' kernel.config || {
-            echo "::error::downloaded kernel config does not look like a .config"
-            exit 1
-          }
-          echo "config lines: $(wc -l < kernel.config)"
-          echo "file=$PWD/kernel.config" >> "$GITHUB_OUTPUT"
-
-      - name: Build rootfs
+            build-essential bc flex bison python3 multipath-tools \
+            clang lld llvm binutils-aarch64-linux-gnu libssl-dev libelf-dev \
+            libncurses-dev dwarves git curl ca-certificates xz-utils
+          sudo update-binfmts --enable qemu-aarch64
+          sudo arch-test arm64
+          sudo git config --system --add safe.directory "$PWD/linux"
+      - name: Build
         env:
-          FIRMWARE_DIR: ${{ steps.firmware.outputs.dir }}
-          KCONFIG: ${{ steps.kconfig.outputs.file }}
-          TAG: ${{ matrix.tag }}
-        run: |
-          set -eux
-          set +e
-          args=(--device "$DEVICE" --suite "$SUITE" --ts "$TS"
-                --kernel-repo "$PWD/linux" --kernel-ref "$KREF"
-                --jobs "$(nproc)" --out "$PWD/out")
-          [ -n "${IMG_SIZE:-}" ] && args+=(--img-size "${IMG_SIZE}G")
-          [ -n "${HOSTNAME:-}" ] && args+=(--hostname "$HOSTNAME")
-          [ -n "${ROOT_PASSWORD:-}" ] && args+=(--root-password "$ROOT_PASSWORD")
-          [ -n "${WIFI_SSID:-}" ] && args+=(--wifi-ssid "$WIFI_SSID" --wifi-password "$WIFI_PASSWORD")
-          [ -n "${FIRMWARE_DIR:-}" ] && args+=(--firmware "$FIRMWARE_DIR")
-          [ -n "${KCONFIG:-}" ] && args+=(--kernel-config "$KCONFIG")
-          [ -n "${{ inputs.kernel_localversion }}" ] && args+=(--kernel-localversion "${{ inputs.kernel_localversion }}")
-          [ -n "${TAG:-}" ] && args+=(--name-suffix "$TAG")
-          sudo -E ./build.sh "${args[@]}" 2>&1 | tee /tmp/build.log
-          rc="${PIPESTATUS[0]}"
-          if [ "$rc" != "0" ]; then
-            # surface the tail as a single annotation: the workflow log itself
-            # needs a token to read, annotations do not
-            msg="$(tail -12 /tmp/build.log | sed 's/%/%25/g; s/\r//g' | paste -sd'%0A' -)"
-            echo "::error title=${DEVICE} build.sh exit ${rc}::${msg}"
-            echo "--- last 40 lines of the build log ---"
-            tail -40 /tmp/build.log
-            exit "$rc"
-          fi
-
-      - name: Build info
+          DEVICE: ${{ matrix.device }}
+          DISTRO: ${{ matrix.distro }}
+          KERNEL: ${{ matrix.kernel }}
+          SUFFIX: ${{ matrix.suffix }}
+          UI: ${{ inputs.ui }}
+          USERSPACE_ONLY: ${{ inputs.userspace_only }}
+          TS: ${{ needs.prepare.outputs.ts }}
         run: |
           set -euo pipefail
-          cd out
-          {
-            echo "MT6895-Mainline rootfs"
-            echo "device:        $DEVICE"
-            echo "kernel branch: $KREF"
-            if [ -n "${{ inputs.kernel_config_url }}" ]; then
-              echo "kernel config: supplied (${{ inputs.kernel_config_url }})"
-            else
-              echo "kernel config: defconfig + device fragment"
-            fi
-            echo "kernel release: see KERNEL-INFO-${DEVICE}.txt (uname -r must match)"
-            echo
-            echo "also attached: Image-${DEVICE} and, when the branch builds one,"
-            echo "dtb-${DEVICE}.dtb - the kernel the modules in this image belong to."
-            echo "rootfs:        debian $SUITE arm64"
-            echo "built:         $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
-            echo "run:           ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            echo
-            echo "flash:"
-            echo "  gunzip -c rootfs-${DEVICE}${{ matrix.tag }}-${TS}-sparse.img.gz | fastboot flash userdata -"
-            echo "  fastboot reboot"
-            echo
-            echo "on first boot the root filesystem grows to fill the userdata partition."
-          } > "BUILD-INFO-$DEVICE.txt"
-          ls -lh
-
-      - name: Upload rootfs artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: rootfs-${{ matrix.device }}
-          path: |
-            out/rootfs-*.img*
-            out/BUILD-INFO-*.txt
-            out/KERNEL-INFO-*.txt
-            out/Image-*
-            out/dtb-*
-          if-no-files-found: error
-          compression-level: 0
-
-  # ---------------------------------------------------------------------------
-  # Collect + publish a permanent release (tag build-<ts>)
-  # ---------------------------------------------------------------------------
-  release:
-    name: publish release
-    needs: [prepare, build]
-    if: ${{ always() && !cancelled() && (github.event_name == 'push' || inputs.publish_release) }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      TS: ${{ needs.prepare.outputs.ts }}
-    steps:
-      # gh release needs a git repository context
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: out
-          merge-multiple: true
-        continue-on-error: true
-
-      - name: Checksums and notes
-        run: |
-          set -euo pipefail
-          mkdir -p out
-          cd out
-          if ! ls -A | grep -q .; then
-            echo "::error title=nothing to publish::no device produced artifacts"
-            echo "no artifacts were downloaded"
-            exit 1
-          fi
-          ls -lh
-          sha256sum -- * > SHA256SUMS 2>/dev/null || true
-          [ -f SHA256SUMS ] || sha256sum ./* > SHA256SUMS
-          {
-            echo "## MT6895-Mainline rootfs \`$TS\`"
-            echo
-            echo "Devices: ${{ inputs.devices || 'pearl xaga' }}"
-            echo "Debian ${{ inputs.suite || 'trixie' }}, arm64.  Per-device details are"
-            echo "in the matching \`BUILD-INFO-<device>.txt\` and \`KERNEL-INFO-<device>.txt\`."
-            echo
-            if [ "${{ needs.build.result }}" != "success" ]; then
-              echo "> Some device builds did not succeed (matrix result:"
-              echo "> \`${{ needs.build.result }}\`); this release contains the artifacts that"
-              echo "> were produced.  Check the run below for the failures."
-              echo
-            fi
-            echo "Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            echo
-            echo "### Flash"
-            echo
-            echo '```bash'
-            echo "# rootfs lives in the userdata partition"
-            echo "gunzip -c rootfs-<device>-<ts>-sparse.img.gz | fastboot flash userdata -"
-            echo "fastboot reboot"
-            echo '```'
-            echo
-            echo "Images larger than 2GB are split because GitHub limits release files to"
-            echo "2GB; rejoin them first:"
-            echo
-            echo '```bash'
-            echo "cat rootfs-<device>-<ts>-sparse.img.gz.part-* > rootfs-<device>-<ts>-sparse.img.gz"
-            echo '```'
-            echo
-            echo "The root filesystem grows to fill the userdata partition on first boot."
-            echo
-            echo "### Kernel"
-            echo
-            echo "The release also carries \`Image-<device>\` (and \`dtb-<device>.dtb\` where the"
-            echo "branch builds one separately) from the same config as the modules inside the"
-            echo "rootfs image, so the two can be flashed as a pair.  \`KERNEL-INFO-<device>.txt\`"
-            echo "records the kernel release the image expects."
-            echo
-            echo "### Firmware"
-            echo
-            echo "Vendor firmware is not distributed with these images.  Extract it from"
-            echo "your own device with \`tools/extract-firmware.sh\` and install it with"
-            echo "\`tools/install-firmware.sh\` (or pass \`firmware_url\` on the next build)."
-          } > NOTES.md
-          cat NOTES.md
-
-      - name: Publish release
-        run: |
-          set -euo pipefail
-          tag="build-$TS"
-          repo="${{ github.repository }}"
-          # GitHub refuses release files of 2GB and larger; those stay available
-          # as workflow artifacts and are left out of the release.
-          files=()
-          skipped=0
-          for f in out/*; do
-            [ -f "$f" ] || continue
-            case "$f" in
-              */NOTES.md) continue ;;
-            esac
-            if [ "$(stat -c%s "$f")" -ge 2000000000 ]; then
-              echo "too large for a release, keeping it in the workflow artifacts: $f"
-              skipped=$((skipped + 1))
-              continue
-            fi
-            files+=("$f")
-          done
-          if [ "${#files[@]}" -eq 0 ]; then
-            echo "::error::no file is small enough to publish (all >= 2GB)"
-            exit 1
-          fi
-          echo "publishing ${#files[@]} file(s), skipped ${skipped}:"
-          printf '  %s\n' "${files[@]}"
-          if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
-            gh release upload "$tag" "${files[@]}" --repo "$repo" --clobber
+          args=(--device "$DEVICE" --distro "$DISTRO" --ui "$UI"
+                --ts "$TS" --out "$PWD/out" --jobs 2 --tar)
+          if [ "$USERSPACE_ONLY" = true ]; then
+            args+=(--rootfs-only)
           else
-            gh release create "$tag" "${files[@]}" --repo "$repo" \
-              --title "MT6895-Mainline rootfs $TS" \
-              --notes-file out/NOTES.md
+            args+=(--kernel-repo "$PWD/linux" --kernel-ref "$KERNEL")
           fi
-          echo "release: ${{ github.server_url }}/$repo/releases/tag/$tag"
+          [ -z "$SUFFIX" ] || args+=(--name-suffix "$SUFFIX")
+          sudo -E bash ./build.sh "${args[@]}"
+          cd out
+          sha256sum -c SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rootfs-${{ matrix.variant }}-${{ matrix.distro }}
+          path: out/*
+          if-no-files-found: error
+  release:
+    needs: [prepare, build]
+    if: inputs.publish_release && !inputs.userspace_only
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: rootfs-*
+          path: release
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd release
+          find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' |
+            sort -z | xargs -0 -r sha256sum > SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ needs.prepare.outputs.ts }}
+          draft: true
+          files: release/*
+          body: |
+            Matching Image, DTB, rootfs and kernel modules.
+            No extracted vendor firmware or modem NVRAM is injected.
+            Default local user PIN: 1234. Root and SSH password login are disabled.
+            Build success is not device boot/IMS/VCP hardware validation.
