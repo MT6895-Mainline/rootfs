@@ -27,10 +27,10 @@ distro_bootstrap() {
 distro_install_packages() {
 	local root="$1"; shift
 	# Never partially upgrade a rolling repository.
-	# WORKAROUND: QEMU user emulation cannot provide Landlock. Disable only the
-	# download filesystem sandbox for this build invocation, not target config.
+	# WORKAROUND: QEMU user emulation cannot provide Landlock/seccomp filters.
+	# This build-only flag does not change the deployed pacman configuration.
 	# shellcheck disable=SC2086
-	distro_chroot "$root" pacman -Syu --disable-sandbox-filesystem --needed --noconfirm $*
+	distro_chroot "$root" pacman -Syu --disable-sandbox --needed --noconfirm $*
 }
 
 distro_configure() {

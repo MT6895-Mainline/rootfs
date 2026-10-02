@@ -58,9 +58,11 @@ WIFI_PASSWORD=""
 KERNEL_MAKE_ARGS="${KERNEL_MAKE_ARGS:-}"
 # Local version suffix the flashed kernel carries (profile sets it, e.g. "+").
 KERNEL_LOCALVERSION_ARG=""
+KERNEL_LOCALVERSION_SET=0
 
 die() { echo "error: $*" >&2; exit 1; }
 log() { printf '\n=== %s ===\n' "$*"; }
+kernel_git() { git -c safe.directory="$KERNEL_REPO" -C "$KERNEL_REPO" "$@"; }
 
 # CI logs are not reachable without a token, but workflow annotations are, so
 # make the failing line announce itself instead of leaving only an exit code.
@@ -88,7 +90,7 @@ while [ $# -gt 0 ]; do
 		--kernel-repo) KERNEL_REPO="${2:?}"; shift 2 ;;
 		--kernel-ref) KERNEL_REF="${2:?}"; shift 2 ;;
 		--kernel-config) KERNEL_CONFIG_FILE="${2:?}"; shift 2 ;;
-		--kernel-localversion) KERNEL_LOCALVERSION_ARG="${2:-}"; shift 2 ;;
+		--kernel-localversion) KERNEL_LOCALVERSION_ARG="${2:-}"; KERNEL_LOCALVERSION_SET=1; shift 2 ;;
 		--kernel-make-args) KERNEL_MAKE_ARGS="${2:?}"; shift 2 ;;
 		--firmware) FIRMWARE_DIR="${2:?}"; shift 2 ;;
 		--jobs) JOBS="${2:?}"; shift 2 ;;
@@ -141,11 +143,13 @@ fi
 # The profile sets the suffix the flashed kernel reports in `uname -r`;
 # --kernel-localversion overrides it (also used to clear it).
 KERNEL_LOCALVERSION="${KERNEL_LOCALVERSION_ARG:-${KERNEL_LOCALVERSION:-}}"
+[ "$KERNEL_LOCALVERSION_SET" = 0 ] || KERNEL_LOCALVERSION="$KERNEL_LOCALVERSION_ARG"
 
 [ "$(id -u)" = "0" ] || die "must run as root"
 if [ "$ROOTFS_ONLY" = 0 ]; then
 	[ -n "$KERNEL_REPO" ] || die "--kernel-repo (or \$KERNEL_REPO) is required"
-	git -C "$KERNEL_REPO" rev-parse --is-inside-work-tree >/dev/null ||
+	KERNEL_REPO="$(realpath "$KERNEL_REPO")"
+	kernel_git rev-parse --is-inside-work-tree >/dev/null ||
 		die "kernel repo '$KERNEL_REPO' is not a git checkout"
 	KERNEL_REPO="$(realpath "$KERNEL_REPO")"
 fi
@@ -185,13 +189,13 @@ KVER=none
 CONFIG_SOURCE=none
 if [ "$ROOTFS_ONLY" = 0 ]; then
 log "0. kernel '$KERNEL_REF' from $KERNEL_REPO"
-KERNEL_COMMIT="$(git -C "$KERNEL_REPO" rev-parse "$KERNEL_REF^{commit}")"
-KVER_MAKEFILE="$(git -C "$KERNEL_REPO" show "$KERNEL_REF:Makefile" 2>/dev/null \
+KERNEL_COMMIT="$(kernel_git rev-parse "$KERNEL_REF^{commit}")"
+KVER_MAKEFILE="$(kernel_git show "$KERNEL_REF:Makefile" 2>/dev/null \
 	| awk -F' = ' '/^(VERSION|PATCHLEVEL|SUBLEVEL) =/{printf "%s%s", sep, $2; sep="."}')"
 [ -n "$KVER_MAKEFILE" ] || die "cannot determine kernel version for $KERNEL_REF"
 echo "kernel version in the Makefile: $KVER_MAKEFILE"
 
-git -C "$KERNEL_REPO" archive --format=tar "$KERNEL_REF" | tar -x -C "$KBOUT"
+kernel_git archive --format=tar "$KERNEL_REF" | tar -x -C "$KBOUT"
 cd "$KBOUT"
 
 log "1. kernel config"
@@ -229,6 +233,11 @@ else
 fi
 # shellcheck disable=SC2086
 make -s $KERNEL_MAKE_ARGS olddefconfig
+if [ "$KERNEL_LOCALVERSION_SET" = 1 ]; then
+	scripts/config --set-str LOCALVERSION "$KERNEL_LOCALVERSION"
+	# shellcheck disable=SC2086
+	make -s $KERNEL_MAKE_ARGS olddefconfig
+fi
 if ! grep -q '^CONFIG_EXTRA_FIRMWARE=""' .config && grep -q '^CONFIG_EXTRA_FIRMWARE=' .config; then
 	[ -n "$FIRMWARE_DIR" ] || die "kernel embeds firmware; supply --firmware or a source-only --kernel-config"
 	scripts/config --set-str EXTRA_FIRMWARE_DIR "$(realpath "$FIRMWARE_DIR")"

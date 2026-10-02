@@ -144,8 +144,8 @@ acceptance. Hardware validation must preserve the stable boot/NV baseline.
 
 ### Build-Only Workaround
 
-Arch package downloads under QEMU cannot use Landlock. The builder passes
-`--disable-sandbox-filesystem` only to its package-install invocations; package
-signatures remain checked, syscall filtering is retained, and the deployed
+Arch package downloads under QEMU cannot use Landlock or seccomp filters. The builder passes
+`--disable-sandbox` only to its package-install invocations; package
+signatures remain checked, and the deployed
 pacman configuration is unchanged. Remove this workaround once the emulation
-environment supports Landlock. See the [pacman manual](https://man.archlinux.org/man/pacman.8.en).
+environment supports both mechanisms. See the [pacman manual](https://man.archlinux.org/man/pacman.8.en).
