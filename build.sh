@@ -219,13 +219,17 @@ else
 		[ -f "arch/arm64/configs/$cfg" ] || die "missing arch/arm64/configs/$cfg"
 		frags="$frags arch/arm64/configs/$cfg"
 	done
+	for cfg in ${KERNEL_EXTRA_CONFIGS:-}; do
+		[ -f "$HERE/$cfg" ] || die "missing rootfs kernel fragment $cfg"
+		frags="$frags $HERE/$cfg"
+	done
 	# The branches' own defconfig enables MediaTek AFE drivers for other SoCs
 	# that do not compile there; the fixups switch them off (they are useless on
 	# MT6895).  A pinned full config already has them off and skips this.
 	if [ -f "$HERE/configs/mt6895-fixups.config" ]; then
 		frags="$frags $HERE/configs/mt6895-fixups.config"
 	fi
-	CONFIG_SOURCE="defconfig + $KERNEL_CONFIGS + fixups"
+	CONFIG_SOURCE="defconfig + $KERNEL_CONFIGS + ${KERNEL_EXTRA_CONFIGS:-} + fixups"
 	echo "merging: $CONFIG_SOURCE"
 	# The device fragments document this exact procedure in their own header:
 	#   scripts/kconfig/merge_config.sh arch/arm64/configs/defconfig <device>.config
