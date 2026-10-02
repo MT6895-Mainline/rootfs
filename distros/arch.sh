@@ -38,12 +38,13 @@ distro_configure() {
 	local root="$1"
 	distro_chroot "$root" pacman-key --init
 	distro_chroot "$root" pacman-key --populate archlinuxarm
+	# Use our matched kernel, not a generic kernel's host-autodetected initramfs.
+	distro_chroot "$root" pacman -R --noconfirm linux-aarch64
 	distro_install_packages "$root" "networkmanager bluez bluez-utils modemmanager \
 		iio-sensor-proxy alsa-ucm-conf alsa-utils openssh sudo kmod e2fsprogs \
 		iproute2 bash shadow"
 	[ "$UI" != phosh ] || distro_install_packages "$root" \
 		"phosh phoc pipewire-pulse wireplumber squeekboard gnome-keyring gnome-settings-daemon"
-	distro_chroot "$root" pacman -R --noconfirm linux-aarch64
 	distro_chroot "$root" userdel -r alarm
 	systemctl --root="$root" disable systemd-networkd.service
 	distro_common_configure "$root"

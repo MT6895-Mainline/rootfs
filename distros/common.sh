@@ -17,6 +17,9 @@ distro_chroot() {
 		mount -t devpts devpts "$root/dev/pts"
 		ln -s pts/ptmx "$root/dev/ptmx"
 		ln -s /proc/self/fd "$root/dev/fd"
+		ln -s fd/0 "$root/dev/stdin"
+		ln -s fd/1 "$root/dev/stdout"
+		ln -s fd/2 "$root/dev/stderr"
 		mount -t proc proc "$root/proc"
 		mount -t tmpfs tmpfs "$root/run"
 		chroot "$root" /usr/bin/env DEBIAN_FRONTEND=noninteractive \
