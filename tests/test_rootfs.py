@@ -42,6 +42,38 @@ class RootfsTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validator.aarch64(path)
 
+    def test_display_manager_alias_and_broken_unit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "etc/systemd/system").mkdir(parents=True)
+            (root / "usr/lib/systemd/system").mkdir(parents=True)
+            unit = root / "usr/lib/systemd/system/gdm.service"
+            unit.write_text("[Install]\nAlias=display-manager.service\n")
+            (root / "etc/systemd/system/display-manager.service").symlink_to(
+                "/usr/lib/systemd/system/gdm.service")
+            self.assertTrue(validator.enabled(root, "gdm.service"))
+            self.assertFalse(validator.enabled(root, "greetd.service"))
+            unit.unlink()
+            self.assertFalse(validator.enabled(root, "gdm.service"))
+
+    def test_gdm_requires_phosh_wayland_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sessions = root / "usr/share/wayland-sessions"
+            sessions.mkdir(parents=True)
+            (sessions / "phosh.desktop").touch()
+            users = root / "var/lib/AccountsService/users"
+            users.mkdir(parents=True)
+            config = users / "mobian"
+            config.write_text("[User]\nSession=phosh\nSessionType=wayland\n")
+            validator.validate_gdm(root, "mobian")
+            config.write_text("[User]\nSession=gnome\nSessionType=wayland\n")
+            with self.assertRaises(ValueError):
+                validator.validate_gdm(root, "mobian")
+            config.write_text("[User]\nSession=phosh\nSessionType=x11\n")
+            with self.assertRaises(ValueError):
+                validator.validate_gdm(root, "mobian")
+
 
 if __name__ == "__main__":
     unittest.main()

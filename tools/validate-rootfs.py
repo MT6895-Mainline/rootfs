@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check offline image contracts without booting or changing target hardware."""
 import argparse
+import configparser
 import os
 from pathlib import Path
 import struct
@@ -45,7 +46,21 @@ def aarch64(path):
 
 def enabled(root, unit):
     directory = root / "etc/systemd/system"
-    return any(path.is_symlink() for path in directory.glob(f"*.wants/{unit}"))
+    paths = list(directory.glob(f"*.wants/{unit}"))
+    if unit == "gdm.service":
+        paths.append(directory / "display-manager.service")
+    return any(path.is_symlink() and rooted(root, path.relative_to(root)).is_file()
+               and rooted(root, path.relative_to(root)).name == unit for path in paths)
+
+
+def validate_gdm(root, user):
+    if not (root / "usr/share/wayland-sessions/phosh.desktop").is_file():
+        raise ValueError("missing GDM Phosh Wayland session")
+    config = configparser.ConfigParser()
+    config.read(root / "var/lib/AccountsService/users" / user)
+    if (config.get("User", "Session", fallback="") != "phosh" or
+            config.get("User", "SessionType", fallback="") != "wayland"):
+        raise ValueError("GDM default user session is not Phosh/Wayland")
 
 
 def validate(args):
@@ -84,6 +99,8 @@ def validate(args):
                 raise ValueError("Phosh must boot to graphical.target")
             if args.phosh_unit != "phosh.service" and enabled(root, "phosh.service"):
                 raise ValueError("greeter and development Phosh service both enabled")
+            if args.phosh_unit == "gdm.service":
+                validate_gdm(root, args.user)
         for unit in units:
             if not enabled(root, unit):
                 raise ValueError(f"unit not enabled: {unit}")

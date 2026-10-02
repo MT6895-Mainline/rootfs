@@ -34,6 +34,8 @@ sudo bash ./build.sh --device qqcandy --distro nura --kernel-repo ../linux
 ```
 
 Default UI is Phosh; `--ui console` selects a console build.
+Mobian/Debian use Phrog/Greetd; Arch uses its packaged GDM with the default
+user's Phosh Wayland session, and Nura uses its native Phosh/OpenRC packages.
 `--suite` overrides a backend's default (Arch currently accepts only rolling,
 the pinned Nura backend only edge). `--mirror` selects the Debian mirror.
 Actions **rootfs** offers a strict device/distribution matrix and optionally

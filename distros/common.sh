@@ -59,11 +59,8 @@ distro_common_configure() {
 		distro_enable_units "$root" NetworkManager.service bluetooth.service \
 			ModemManager.service "$SSH_UNIT"
 		if [ "$UI" = phosh ]; then
-			if [ "$PHOSH_UNIT" = phosh.service ]; then
-				install -d "$root/etc/systemd/system/phosh.service.d"
-				printf '[Service]\nUser=%s\n' "$DEFAULT_USER" > \
-					"$root/etc/systemd/system/phosh.service.d/10-user.conf"
-			else
+			if [ -f "$root/usr/lib/systemd/system/phosh.service" ] ||
+				[ -f "$root/lib/systemd/system/phosh.service" ]; then
 				systemctl --root="$root" disable phosh.service
 			fi
 			distro_enable_units "$root" "$PHOSH_UNIT"

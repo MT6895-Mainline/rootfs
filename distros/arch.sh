@@ -6,7 +6,7 @@ DISTRO_DEFAULT_SUITE=rolling
 INIT_SYSTEM=systemd
 ADMIN_GROUP=wheel
 SSH_UNIT=sshd.service
-PHOSH_UNIT=phosh.service
+PHOSH_UNIT=gdm.service
 VAAPI_BUILD_PACKAGES="base-devel libva libdrm"
 ARCH_SIGNING_KEY=68B3537F39A313B3E574D06777193F152BDBE6A6
 ARCH_ROOTFS_URL="${ARCH_ROOTFS_URL:-https://de3.mirror.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz}"
@@ -44,8 +44,14 @@ distro_configure() {
 		iio-sensor-proxy alsa-ucm-conf alsa-utils openssh sudo kmod e2fsprogs \
 		iproute2 bash shadow"
 	[ "$UI" != phosh ] || distro_install_packages "$root" \
-		"phosh phoc pipewire-pulse wireplumber squeekboard gnome-keyring gnome-settings-daemon"
+		"phosh phoc gdm pipewire-pulse wireplumber squeekboard gnome-keyring gnome-settings-daemon"
 	distro_chroot "$root" userdel -r alarm
 	systemctl --root="$root" disable systemd-networkd.service
 	distro_common_configure "$root"
+	if [ "$UI" = phosh ]; then
+		install -d -m 0700 "$root/var/lib/AccountsService/users"
+		printf '[User]\nSession=phosh\nSessionType=wayland\nSystemAccount=false\n' > \
+			"$root/var/lib/AccountsService/users/$DEFAULT_USER"
+		chmod 0600 "$root/var/lib/AccountsService/users/$DEFAULT_USER"
+	fi
 }
