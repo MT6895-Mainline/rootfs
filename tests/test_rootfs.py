@@ -74,6 +74,15 @@ class RootfsTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validator.validate_gdm(root, "mobian")
 
+    def test_required_kernel_modules_and_compression(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "ccci_md_all.ko.zst").touch()
+            (root / "ccci_ccif.ko").touch()
+            validator.require_modules(root, ["ccci_md_all", "ccci_ccif"])
+            with self.assertRaisesRegex(ValueError, "ccci_dpmaif"):
+                validator.require_modules(root, ["ccci_dpmaif"])
+
 
 if __name__ == "__main__":
     unittest.main()

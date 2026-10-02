@@ -109,7 +109,9 @@ SCP's semaphore-notifier dependency, and selects its MT6368 codec/machine.
 Its fixups exclude the mainline CMDQ helper that conflicts with mediatek_v2.
 The incomplete, opt-in `ccci_diag` bring-up experiment is also excluded from
 normal images as a **WORKAROUND**, not repaired with a stub; production CCCI
-is unchanged. Re-enable diagnostics only after separate source/hardware review.
+source is unchanged. The qqcandy profile builds production ECCCI/CCIF as
+loadable modules, matching the device's configuration, without adding an MD
+owner service. Re-enable diagnostics only after separate source/hardware review.
 Module-directory mismatches fail rather than silently changing the expected
 release. `KERNEL-INFO` records the resolved commit, configuration and release.
 Flash/use Image, DTB and rootfs modules as a matched set: a shared `uname -r`

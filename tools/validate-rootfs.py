@@ -63,6 +63,13 @@ def validate_gdm(root, user):
         raise ValueError("GDM default user session is not Phosh/Wayland")
 
 
+def require_modules(directory, names):
+    for name in names:
+        if not any(path.is_file() for extension in (".ko", ".ko.xz", ".ko.zst", ".ko.gz")
+                   for path in directory.rglob(name + extension)):
+            raise ValueError(f"missing required kernel module: {name}")
+
+
 def validate(args):
     root = args.root.resolve()
     aarch64(rooted(root, "/sbin/init"))
@@ -131,6 +138,7 @@ def validate(args):
             raise ValueError("kernel/module directory mismatch")
         if not (modules / args.kernel / "modules.dep").is_file():
             raise ValueError("missing modules.dep")
+        require_modules(modules / args.kernel, args.required_module)
     print(f"Rootfs contracts passed: {args.device}, {args.init}, {args.ui}, kernel={args.kernel}")
 
 
@@ -144,6 +152,7 @@ def main():
     parser.add_argument("--ssh-unit", default="ssh.service")
     parser.add_argument("--phosh-unit", default="greetd.service")
     parser.add_argument("--kernel", default="none")
+    parser.add_argument("--required-module", action="append", default=[])
     parser.add_argument("--vaapi", action="store_true")
     parser.add_argument("--allow-root-password", action="store_true")
     args = parser.parse_args()

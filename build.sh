@@ -463,6 +463,11 @@ checks=("$ROOTFS" --device "$DEVICE" --user "$DEFAULT_USER" --init "$INIT_SYSTEM
 	--ui "$UI" --kernel "$KVER" --ssh-unit "${SSH_UNIT:-ssh.service}"
 	--phosh-unit "${PHOSH_UNIT:-greetd.service}")
 [ -z "$ROOT_PASSWORD" ] || checks+=(--allow-root-password)
+if [ "$ROOTFS_ONLY" = 0 ] && [ -z "$KERNEL_CONFIG_FILE" ]; then
+	for module in ${KERNEL_REQUIRED_MODULES:-}; do
+		checks+=(--required-module "$module")
+	done
+fi
 if [ "$VAAPI" != off ] && [ -n "${VAAPI_REPO:-}" ]; then
 	checks+=(--vaapi)
 fi
