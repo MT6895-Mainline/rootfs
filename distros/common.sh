@@ -17,7 +17,8 @@ distro_chroot() {
 		ln -s /proc/self/fd "$root/dev/fd"
 		mount -t proc proc "$root/proc"
 		mount -t tmpfs tmpfs "$root/run"
-		chroot "$root" /usr/bin/env DEBIAN_FRONTEND=noninteractive "$@"
+		chroot "$root" /usr/bin/env DEBIAN_FRONTEND=noninteractive \
+			PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "$@"
 	' bash "$root" "$@"
 }
 
