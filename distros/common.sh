@@ -5,6 +5,8 @@ distro_chroot() {
 	local root="$1"; shift
 	unshare --mount --propagation private bash -euc '
 		root=$1; shift
+		# libalpm needs a root mount visible in the chroot mount table.
+		mount --bind "$root" "$root"
 		mkdir -p "$root/dev" "$root/proc" "$root/run"
 		mount -t tmpfs -o mode=0755 tmpfs "$root/dev"
 		for node in null zero random urandom; do
@@ -69,6 +71,8 @@ distro_common_configure() {
 
 distro_finalize() {
 	local root="$1"
+	# Debian otherwise treats the OpenRC script as a same-named SysV service.
+	rm -f "$root/etc/init.d/mt6895-firstboot"
 	distro_enable_units "$root" mt6895-firstboot.service
 	# Identity/accounts are configured here, not by an interactive boot prompt.
 	systemctl --root="$root" mask systemd-firstboot.service

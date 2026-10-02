@@ -88,6 +88,7 @@ distro_configure() {
 
 distro_finalize() {
 	local root="$1"
+	rm -f "$root/etc/systemd/system/mt6895-firstboot.service"
 	distro_chroot "$root" rc-update add mt6895-firstboot default
 	rm -f "$root/etc/resolv.conf" "$root/etc/ssh/ssh_host_"*
 	ln -s /run/NetworkManager/resolv.conf "$root/etc/resolv.conf"

@@ -74,6 +74,8 @@ def validate(args):
     if not (root / "usr/local/sbin/mt6895-firstboot").stat().st_mode & 0o111:
         raise ValueError("firstboot script is not executable")
     if args.init == "systemd":
+        if (root / "etc/init.d/mt6895-firstboot").exists():
+            raise ValueError("OpenRC firstboot script in a systemd image")
         units = ["NetworkManager.service", "bluetooth.service", "ModemManager.service",
                  args.ssh_unit, "mt6895-firstboot.service"]
         if args.ui == "phosh":
@@ -86,6 +88,8 @@ def validate(args):
             if not enabled(root, unit):
                 raise ValueError(f"unit not enabled: {unit}")
     else:
+        if (root / "etc/systemd/system/mt6895-firstboot.service").exists():
+            raise ValueError("systemd firstboot unit in an OpenRC image")
         services = ["networkmanager", "bluetooth", "modemmanager", "sshd", "mt6895-firstboot"]
         if args.ui == "phosh":
             services.append("greetd")

@@ -4,13 +4,13 @@
 #
 # Builds a flashable rootfs image for an MT6895 device:
 #   - kernel modules built from the matching linux branch, so vermagic matches
-#   - userspace bootstrapped with mmdebstrap (arm64, foreign arch via qemu)
+#   - Debian/Mobian, Arch Linux ARM or Nura userspace (ARM64 via QEMU)
 #   - per-device + common overlay applied
 #   - optional bring-your-own firmware blobs
 #   - outputs a sparse ext4 image (+ option to split for the 2GB release limit)
 #
 # Output naming follows the sibling xaga build project:
-#   rootfs-sparse-<YYYYmmdd-HHMMSS>.img[.gz[.part-NN]]  and SHA256SUMS
+#   rootfs-<device>-<distro>-<timestamp>-sparse.img[.gz] and SHA256SUMS
 #
 # Usage:
 #   sudo ./build.sh --device pearl --kernel-repo ./linux
@@ -19,6 +19,8 @@
 #   sudo ./build.sh --device pearl --kernel-repo ./linux \
 #                   --kernel-config /path/to/the/kernel/.config
 #   sudo ./build.sh --device pearl --kernel-repo ./linux --kernel-localversion "+"
+#   sudo ./build.sh --device qqcandy --distro nura --kernel-repo ./linux
+#   sudo ./build.sh --device qqcandy --distro arch --rootfs-only --tar
 #
 set -euo pipefail
 
@@ -109,6 +111,8 @@ while [ $# -gt 0 ]; do
 		*) die "unknown argument: $1" ;;
 	esac
 done
+
+[ "$DISTRO" != pmos ] || DISTRO=nura
 
 for value in "$ROOT_PASSWORD" "$USER_PASSWORD" "$WIFI_SSID" "$WIFI_PASSWORD"; do
 	[[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || die "credentials must be single-line"
