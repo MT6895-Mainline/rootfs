@@ -106,6 +106,10 @@ SHA256SUMS
 A fresh source export builds **Image**, the requested board DTB and modules.
 The qqcandy audio fragment keeps the MT6895 AFE built-in, matching the built-in
 SCP's semaphore-notifier dependency, and selects its MT6368 codec/machine.
+Its fixups exclude the mainline CMDQ helper that conflicts with mediatek_v2.
+The incomplete, opt-in `ccci_diag` bring-up experiment is also excluded from
+normal images as a **WORKAROUND**, not repaired with a stub; production CCCI
+is unchanged. Re-enable diagnostics only after separate source/hardware review.
 Module-directory mismatches fail rather than silently changing the expected
 release. `KERNEL-INFO` records the resolved commit, configuration and release.
 Flash/use Image, DTB and rootfs modules as a matched set: a shared `uname -r`
