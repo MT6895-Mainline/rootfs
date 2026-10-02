@@ -32,6 +32,12 @@ EOF
 distro_bootstrap() {
 	local root="$1" suite="$2" arch="$3" mirror="$4"
 	local packages="${PACKAGES_CORE:-} ${PACKAGES_EXTRA:-} ca-certificates bash passwd"
+	local sources=("${mirror:-https://deb.debian.org/debian}")
+	case "$suite" in
+		trixie|bookworm|bullseye)
+			sources+=("deb https://security.debian.org/debian-security $suite-security main contrib non-free-firmware"
+				"deb ${mirror:-https://deb.debian.org/debian} $suite-updates main contrib non-free-firmware") ;;
+	esac
 	debian_keyring
 	mmdebstrap --architectures="$arch" --variant=important \
 		--keyring="$WORK/debian-trust/archive.gpg" \
@@ -39,7 +45,7 @@ distro_bootstrap() {
 		--include="$(tr ' ' ',' <<< "$packages" | tr -s ',')" \
 		--aptopt='Apt::Install-Recommends "false"' \
 		--aptopt='Acquire::Retries "3"' \
-		"$suite" "$root" "${mirror:-https://deb.debian.org/debian}"
+		"$suite" "$root" "${sources[@]}"
 	install -m 0644 /etc/resolv.conf "$root/etc/resolv.conf"
 }
 
