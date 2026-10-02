@@ -6,6 +6,7 @@ DISTRO_DEFAULT_SUITE=rolling
 INIT_SYSTEM=systemd
 ADMIN_GROUP=wheel
 SSH_UNIT=sshd.service
+PHOSH_UNIT=phosh.service
 VAAPI_BUILD_PACKAGES="base-devel libva libdrm"
 ARCH_SIGNING_KEY=68B3537F39A313B3E574D06777193F152BDBE6A6
 ARCH_ROOTFS_URL="${ARCH_ROOTFS_URL:-https://de3.mirror.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz}"
@@ -40,7 +41,8 @@ distro_configure() {
 	distro_install_packages "$root" "networkmanager bluez bluez-utils modemmanager \
 		iio-sensor-proxy alsa-ucm-conf alsa-utils openssh sudo kmod e2fsprogs \
 		iproute2 bash shadow"
-	[ "$UI" != phosh ] || distro_install_packages "$root" "phosh phoc pipewire wireplumber"
+	[ "$UI" != phosh ] || distro_install_packages "$root" \
+		"phosh phoc pipewire-pulse wireplumber squeekboard gnome-keyring gnome-settings-daemon"
 	distro_chroot "$root" pacman -R --noconfirm linux-aarch64
 	distro_chroot "$root" userdel -r alarm
 	systemctl --root="$root" disable systemd-networkd.service

@@ -53,13 +53,25 @@ distro_common_configure() {
 	if [ "$INIT_SYSTEM" = systemd ]; then
 		distro_enable_units "$root" NetworkManager.service bluetooth.service \
 			ModemManager.service "$SSH_UNIT"
-		[ "$UI" != phosh ] || distro_enable_units "$root" phosh.service
+		if [ "$UI" = phosh ]; then
+			if [ "$PHOSH_UNIT" = phosh.service ]; then
+				install -d "$root/etc/systemd/system/phosh.service.d"
+				printf '[Service]\nUser=%s\n' "$DEFAULT_USER" > \
+					"$root/etc/systemd/system/phosh.service.d/10-user.conf"
+			else
+				systemctl --root="$root" disable phosh.service
+			fi
+			distro_enable_units "$root" "$PHOSH_UNIT"
+			systemctl --root="$root" set-default graphical.target
+		fi
 	fi
 }
 
 distro_finalize() {
 	local root="$1"
 	distro_enable_units "$root" mt6895-firstboot.service
+	# Identity/accounts are configured here, not by an interactive boot prompt.
+	systemctl --root="$root" mask systemd-firstboot.service
 	rm -f "$root/etc/resolv.conf" "$root/etc/ssh/ssh_host_"* "$root/var/lib/dbus/machine-id"
 	ln -s /run/NetworkManager/resolv.conf "$root/etc/resolv.conf"
 	: > "$root/etc/machine-id"

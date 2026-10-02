@@ -450,6 +450,16 @@ rm -rf "$ROOTFS/var/cache/apt"/* "$ROOTFS/var/lib/apt/lists"/* 2>/dev/null || tr
 rm -rf "$ROOTFS/tmp"/* 2>/dev/null || true
 install -d -m 1777 "$ROOTFS/tmp" "$ROOTFS/var/tmp"
 
+log "8b. validate image contracts"
+checks=("$ROOTFS" --device "$DEVICE" --user "$DEFAULT_USER" --init "$INIT_SYSTEM"
+	--ui "$UI" --kernel "$KVER" --ssh-unit "${SSH_UNIT:-ssh.service}"
+	--phosh-unit "${PHOSH_UNIT:-greetd.service}")
+[ -z "$ROOT_PASSWORD" ] || checks+=(--allow-root-password)
+if [ "$VAAPI" != off ] && [ -n "${VAAPI_REPO:-}" ]; then
+	checks+=(--vaapi)
+fi
+python3 "$HERE/tools/validate-rootfs.py" "${checks[@]}"
+
 if [ "$MAKE_TAR" = "1" ]; then
 	log "9. tar.zst"
 	( cd "$ROOTFS" && tar --numeric-owner --xattrs -I 'zstd -19 -T0' -cpf "$OUT/$STUB.tar.zst" . )

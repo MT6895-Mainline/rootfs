@@ -11,7 +11,7 @@ distro_configure() {
 	printf 'Package: *\nPin: release o=Mobian\nPin-Priority: 700\n' \
 		> "$root/etc/apt/preferences.d/00-mobian-priority"
 	local packages=mobian-base
-	[ "$UI" != phosh ] || packages="$packages mobian-phosh"
+	[ "$UI" != phosh ] || packages="$packages mobian-phosh phrog"
 	distro_install_packages "$root" "$packages"
 	distro_common_configure "$root"
 }

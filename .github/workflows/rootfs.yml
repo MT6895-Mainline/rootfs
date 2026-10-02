@@ -27,7 +27,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: rootfs-${{ github.ref }}
+  group: rootfs-${{ github.ref }}-${{ inputs.distros }}-${{ inputs.userspace_only }}
   cancel-in-progress: false
 
 jobs:

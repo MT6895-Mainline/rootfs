@@ -6,6 +6,7 @@ DISTRO_DEFAULT_SUITE=trixie
 INIT_SYSTEM=systemd
 ADMIN_GROUP=sudo
 SSH_UNIT=ssh.service
+PHOSH_UNIT=greetd.service
 VAAPI_BUILD_PACKAGES="build-essential libva-dev libdrm-dev pkg-config"
 
 debian_keyring() {
@@ -52,6 +53,6 @@ distro_install_packages() {
 
 distro_configure() {
 	local root="$1"
-	[ "$UI" != phosh ] || distro_install_packages "$root" "phosh phoc pipewire wireplumber"
+	[ "$UI" != phosh ] || distro_install_packages "$root" "phosh-core phrog wireplumber"
 	distro_common_configure "$root"
 }
