@@ -6,7 +6,7 @@ DISTRO_DEFAULT_SUITE=rolling
 INIT_SYSTEM=systemd
 ADMIN_GROUP=wheel
 SSH_UNIT=sshd.service
-VAAPI_BUILD_PACKAGES="base-devel libva"
+VAAPI_BUILD_PACKAGES="base-devel libva libdrm"
 ARCH_SIGNING_KEY=68B3537F39A313B3E574D06777193F152BDBE6A6
 ARCH_ROOTFS_URL="${ARCH_ROOTFS_URL:-https://de3.mirror.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz}"
 
@@ -27,8 +27,10 @@ distro_bootstrap() {
 distro_install_packages() {
 	local root="$1"; shift
 	# Never partially upgrade a rolling repository.
+	# WORKAROUND: QEMU user emulation cannot provide Landlock. Disable only the
+	# download filesystem sandbox for this build invocation, not target config.
 	# shellcheck disable=SC2086
-	distro_chroot "$root" pacman -Syu --needed --noconfirm $*
+	distro_chroot "$root" pacman -Syu --disable-sandbox-filesystem --needed --noconfirm $*
 }
 
 distro_configure() {

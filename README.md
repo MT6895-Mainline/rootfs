@@ -141,3 +141,11 @@ Checks exercise matrix validation and shell contracts. Real ARM64 rootfs
 builds are separate workflow runs; a passing syntax check is not a build.
 Likewise build success is not phone boot, touch/audio, modem or VCP runtime
 acceptance. Hardware validation must preserve the stable boot/NV baseline.
+
+### Build-Only Workaround
+
+Arch package downloads under QEMU cannot use Landlock. The builder passes
+`--disable-sandbox-filesystem` only to its package-install invocations; package
+signatures remain checked, syscall filtering is retained, and the deployed
+pacman configuration is unchanged. Remove this workaround once the emulation
+environment supports Landlock. See the [pacman manual](https://man.archlinux.org/man/pacman.8.en).

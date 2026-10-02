@@ -6,7 +6,7 @@ DISTRO_HOST_TOOLS="python3 git chroot unshare kpartx openssl"
 DISTRO_DEFAULT_SUITE=edge
 INIT_SYSTEM=openrc
 ADMIN_GROUP=wheel
-VAAPI_BUILD_PACKAGES="build-base libva-dev linux-headers pkgconf"
+VAAPI_BUILD_PACKAGES="build-base libva-dev libdrm-dev linux-headers pkgconf"
 PMBOOTSTRAP_COMMIT=b31c99504d70ec7b8e2e6e47eb84262bd7114e94
 PMAPORTS_COMMIT=5f7529d92dcc1c41b2bfb6a7b3e09df8fafc0a34
 
@@ -19,6 +19,11 @@ pmb() {
 distro_bootstrap() {
 	local root="$1" suite="$2"
 	[ "$suite" = edge ] || die "the pinned Nura backend supports --suite edge only"
+	if [ "$(uname -m)" != aarch64 ]; then
+		arch-test arm64
+		[ -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ] ||
+			die "register the host qemu-aarch64 handler before using pmbootstrap"
+	fi
 	git clone --depth 1 "${PMBOOTSTRAP_REPO:-https://gitlab.postmarketos.org/postmarketOS/pmbootstrap.git}" "$WORK/pmbootstrap"
 	git -C "$WORK/pmbootstrap" fetch --depth 1 origin "$PMBOOTSTRAP_COMMIT"
 	git -C "$WORK/pmbootstrap" checkout --detach "$PMBOOTSTRAP_COMMIT"
@@ -49,7 +54,9 @@ EOF
 	if [ "$UI" = phosh ]; then
 		pmb chroot -r -- apk add postmarketos-ui-phosh postmarketos-ui-phosh-openrc
 	fi
-	pmb shutdown
+	# Upstream shutdown unregisters ALL host QEMU handlers, even pre-existing
+	# ones. Only detach this build's mounts, retaining host interpreter state.
+	python3 "$HERE/tools/unmount-tree.py" "$WORK/pmb-work"
 	cp -a "$WORK/pmb-work/chroot_rootfs_qemu-aarch64/." "$root/"
 	# Keys were bind-mounted by pmbootstrap; retain the public trust anchors.
 	install -d "$root/etc/apk/keys"

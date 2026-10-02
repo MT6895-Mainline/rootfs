@@ -64,7 +64,7 @@ jobs:
       - name: Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends mmdebstrap arch-test \
+          sudo apt-get install -y --no-install-recommends mmdebstrap arch-test debian-archive-keyring \
             qemu-user-static binfmt-support libarchive-tools gnupg \
             e2fsprogs android-sdk-libsparse-utils pigz zstd kmod rsync \
             build-essential bc flex bison python3 multipath-tools \
