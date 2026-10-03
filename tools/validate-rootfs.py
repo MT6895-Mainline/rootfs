@@ -47,7 +47,7 @@ def aarch64(path):
 def enabled(root, unit):
     directory = root / "etc/systemd/system"
     paths = list(directory.glob(f"*.wants/{unit}"))
-    if unit == "gdm.service":
+    if unit in ("gdm.service", "greetd.service"):
         paths.append(directory / "display-manager.service")
     return any(path.is_symlink() and rooted(root, path.relative_to(root)).is_file()
                and rooted(root, path.relative_to(root)).name == unit for path in paths)

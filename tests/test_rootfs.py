@@ -56,6 +56,21 @@ class RootfsTest(unittest.TestCase):
             unit.unlink()
             self.assertFalse(validator.enabled(root, "gdm.service"))
 
+    def test_greetd_display_manager_alias(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "etc/systemd/system").mkdir(parents=True)
+            (root / "usr/lib/systemd/system").mkdir(parents=True)
+            unit = root / "usr/lib/systemd/system/greetd.service"
+            unit.write_text("[Install]\nAlias=display-manager.service\n")
+            (root / "etc/systemd/system/display-manager.service").symlink_to(
+                "/usr/lib/systemd/system/greetd.service")
+            self.assertTrue(validator.enabled(root, "greetd.service"))
+            self.assertFalse(validator.enabled(root, "gdm.service"))
+            self.assertFalse(validator.enabled(root, "NetworkManager.service"))
+            unit.unlink()
+            self.assertFalse(validator.enabled(root, "greetd.service"))
+
     def test_gdm_requires_phosh_wayland_session(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
