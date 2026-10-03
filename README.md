@@ -148,7 +148,7 @@ The first-boot service grows ext4 and generates per-installation SSH keys.
 | --- | --- | --- |
 | Arch Linux ARM / GDM | Passed: Image, DTB, modules, tar, ext4 and checksums | `01475dc`, [job](https://github.com/MT6895-Mainline/rootfs/actions/runs/37047995064/job/110974148298) |
 | Nura / OpenRC | Passed: Image, DTB, modules, tar, ext4 and checksums | `01475dc`, [job](https://github.com/MT6895-Mainline/rootfs/actions/runs/37047995064/job/110974148374) |
-| Mobian / Phrog | Validation in progress after Greetd alias-check correction | `5318d97`, [run](https://github.com/MT6895-Mainline/rootfs/actions/runs/37083419238) |
+| Mobian / Phrog | Passed: Image, DTB, modules, tar, ext4 and checksums | `5318d97`, [job](https://github.com/MT6895-Mainline/rootfs/actions/runs/37083419238/job/111088654679) |
 
 Arch/Nura downloaded artifacts also passed independent checksum, rootfs-content
 and read-only ext4 checks. Current script checks pass all 13 offline tests.
