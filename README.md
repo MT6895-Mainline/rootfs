@@ -160,7 +160,7 @@ The first-boot service grows ext4 and generates per-installation SSH keys.
 | Mobian / Phrog | Passed: Image, DTB, modules, tar, ext4 and checksums | `5318d97`, [job](https://github.com/MT6895-Mainline/rootfs/actions/runs/37083419238/job/111088654679) |
 
 All three distributions' downloaded artifacts also passed independent checksum, rootfs-content
-and read-only ext4 checks. Current script checks pass all 23 offline tests.
+and read-only ext4 checks. Current script checks pass all 24 offline tests.
 The full profile requires the four production ECCCI modules; successful
 compilation does not mean an MD owner or working IMS has been installed.
 

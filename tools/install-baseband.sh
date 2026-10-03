@@ -30,7 +30,8 @@ for ref in "$OWNER_REF" "$MM_REF"; do
 	[[ "$ref" = latest || "$ref" =~ ^[0-9a-f]{40}$ ]] || die 'refs must be latest or full commit IDs'
 done
 [ "$(id -u)" = 0 ] || die 'offline rootfs installation requires root'
-[ -n "$ROOTFS" ] && [ -d "$ROOTFS" ] || die '--root must be an existing offline rootfs'
+[ -n "$ROOTFS" ] || die '--root must be an existing offline rootfs'
+[ -d "$ROOTFS" ] || die '--root must be an existing offline rootfs'
 ROOTFS="$(realpath "$ROOTFS")"
 [ "$ROOTFS" != / ] || die 'refusing to update a running system or modem'
 for directory in usr/src usr/lib/mtk-ccci usr/libexec/mtk-ccci usr/share/mt6895-build \
@@ -103,9 +104,33 @@ select_bundle() {
 	ACTIVATED=1
 	install -m 0644 "$ROOTFS$PREFIX/manifest.json" "$ROOTFS/usr/share/mt6895-build/baseband.json"
 }
+install_integration() {
+	local rule="$ROOTFS/etc/udev/rules.d/77-mm-mtk-soc.rules"
+	if [ -e "$rule" ]; then
+		cmp -s "$rule" "$WORK/mm/src/plugins/mtk-soc/77-mm-mtk-soc.rules" || die 'preserving a different existing MTK udev rule'
+	else
+		install -D -m 0644 "$WORK/mm/src/plugins/mtk-soc/77-mm-mtk-soc.rules" "$rule"
+	fi
+	install -d "$ROOTFS/usr/libexec/mtk-ccci" "$ROOTFS/usr/share/mt6895-build"
+	install -m 0755 "$HERE/baseband/ModemManager" "$ROOTFS/usr/libexec/mtk-ccci/ModemManager"
+	install -m 0755 "$HERE/baseband/start-owner" "$ROOTFS/usr/libexec/mtk-ccci/start-owner"
+	install -m 0755 "$HERE/baseband/wait-ready.py" "$ROOTFS/usr/libexec/mtk-ccci/wait-ready.py"
+	if [ "$INIT_SYSTEM" = systemd ]; then
+		install -d "$ROOTFS/usr/lib/systemd/system"
+		sed 's|^ExecStart=.*|ExecStart=/usr/libexec/mtk-ccci/start-owner|' \
+			"$WORK/owner/systemd/mtk-ccci-owner.service.example" > \
+			"$ROOTFS/usr/lib/systemd/system/mtk-ccci-owner.service"
+		install -m 0644 "$HERE/baseband/mtk-modemmanager.service" "$ROOTFS/usr/lib/systemd/system/mtk-modemmanager.service"
+	else
+		install -d "$ROOTFS/etc/init.d"
+		install -m 0755 "$HERE/baseband/mtk-ccci-owner.initd" "$ROOTFS/etc/init.d/mtk-ccci-owner"
+		install -m 0755 "$HERE/baseband/mtk-modemmanager.initd" "$ROOTFS/etc/init.d/mtk-modemmanager"
+	fi
+}
 if [ -e "$ROOTFS$PREFIX" ]; then
 	validate_bundle
 	check_versions
+	install_integration
 	select_bundle
 	printf 'Selected existing tested baseband bundle %s; no rebuild or hardware startup.\n' "$RELEASE"
 	exit 0
@@ -153,27 +178,7 @@ PY
 mkdir -p "$ROOTFS/usr/lib/mtk-ccci/releases"
 mv "$SOURCE_DIR/stage$PREFIX" "$ROOTFS$PREFIX"
 RELEASE_CREATED=1
-install -d "$ROOTFS/usr/libexec/mtk-ccci" "$ROOTFS/usr/share/mt6895-build"
-install -m 0755 "$HERE/baseband/ModemManager" "$ROOTFS/usr/libexec/mtk-ccci/ModemManager"
-install -m 0755 "$HERE/baseband/start-owner" "$ROOTFS/usr/libexec/mtk-ccci/start-owner"
-install -m 0755 "$HERE/baseband/wait-ready.py" "$ROOTFS/usr/libexec/mtk-ccci/wait-ready.py"
-rule="$ROOTFS/etc/udev/rules.d/77-mm-mtk-soc.rules"
-if [ -e "$rule" ]; then
-	cmp -s "$rule" "$WORK/mm/src/plugins/mtk-soc/77-mm-mtk-soc.rules" || die 'preserving a different existing MTK udev rule'
-else
-	install -D -m 0644 "$WORK/mm/src/plugins/mtk-soc/77-mm-mtk-soc.rules" "$rule"
-fi
-if [ "$INIT_SYSTEM" = systemd ]; then
-	install -d "$ROOTFS/usr/lib/systemd/system"
-	sed 's|^ExecStart=.*|ExecStart=/usr/libexec/mtk-ccci/start-owner|' \
-		"$WORK/owner/systemd/mtk-ccci-owner.service.example" > \
-		"$ROOTFS/usr/lib/systemd/system/mtk-ccci-owner.service"
-	install -m 0644 "$HERE/baseband/mtk-modemmanager.service" "$ROOTFS/usr/lib/systemd/system/mtk-modemmanager.service"
-else
-	install -d "$ROOTFS/etc/init.d"
-	install -m 0755 "$HERE/baseband/mtk-ccci-owner.initd" "$ROOTFS/etc/init.d/mtk-ccci-owner"
-	install -m 0755 "$HERE/baseband/mtk-modemmanager.initd" "$ROOTFS/etc/init.d/mtk-modemmanager"
-fi
+install_integration
 python3 - "$ROOTFS$PREFIX/manifest.json" "$OWNER_COMMIT" "$MM_COMMIT" "$DISTRO" <<'PY'
 import json
 from pathlib import Path

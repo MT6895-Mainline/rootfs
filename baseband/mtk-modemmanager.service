@@ -1,13 +1,12 @@
 [Unit]
 Description=MediaTek CCCI ModemManager bundle
 Requires=mtk-ccci-owner.service
-After=mtk-ccci-owner.service dbus.service
+After=mtk-ccci-owner.service dbus.service ModemManager.service
 Conflicts=ModemManager.service
 ConditionPathExists=/etc/default/mtk-ccci
 
 [Service]
-Type=dbus
-BusName=org.freedesktop.ModemManager1
+Type=exec
 ExecStartPre=/usr/bin/python3 /usr/libexec/mtk-ccci/wait-ready.py
 ExecStart=/usr/libexec/mtk-ccci/ModemManager
 TimeoutStartSec=150

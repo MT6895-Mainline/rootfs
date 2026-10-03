@@ -41,9 +41,11 @@ The owner `f6147b10cf7ef95932674506fbdfb7f3d67a1067` and MM
 build/install tests in separate Mobian, Arch Linux ARM and Nura rootfs copies.
 Each ran the owner's 12 checks (one Meson suite), all 18 suites in this
 generic + mtk-soc MM configuration, and the real version-only entrypoints.
-Rootfs content contracts and repeat installation also passed. The 23 offline
+Rootfs content contracts and repeat installation also passed. The 24 offline
 builder tests include failed-install DNS restoration, previous-selection
 preservation, corrupt-cache rejection and disabled-service checks.
+Offline systemd unit loading was also checked; it exposed and prevented a
+duplicate `BusName` declaration with the retained distribution MM unit.
 
 These are userspace installation tests, not replacement full-image workflow
 runs or phone tests. The previously accepted Image/DTB/rootfs artifacts were
@@ -75,6 +77,12 @@ loading/readiness gate, matching kernel release/notes, private firmware and
 configuration, read-only protected mounts, and bounded private write storage.
 The owner's existing fail-closed preflight remains intact. MM starts only
 after MD READY, with a bounded read-only wait; a second MM must not run.
+At deployment, the distribution MM must be stopped and disabled/masked (or
+removed from the OpenRC runlevel) before selecting the private service, including
+its D-Bus activation path. The private systemd unit uses `Type=exec` rather
+than reserving the same `BusName` as the retained distribution unit, and
+orders startup after that unit's stop. These are deployment prerequisites,
+not actions performed by the installer.
 
 No live-system updater or first-boot network downloader is enabled. Do not
 hot-switch the bundle or restart its owner while MD is active. A newer source

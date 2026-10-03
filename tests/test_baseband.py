@@ -1,4 +1,5 @@
 import importlib.util
+import configparser
 import json
 import os
 from pathlib import Path
@@ -179,6 +180,15 @@ esac
             with patch.object(gate.time, "monotonic", side_effect=[0, 2]):
                 with self.assertRaisesRegex(RuntimeError, "did not reach READY"):
                     gate.wait_ready(state, 1)
+
+    def test_private_unit_does_not_allocate_distribution_dbus_name(self):
+        unit = configparser.ConfigParser(interpolation=None)
+        unit.read(HERE / "baseband/mtk-modemmanager.service")
+        self.assertEqual(unit["Service"]["Type"], "exec")
+        self.assertNotIn("BusName", unit["Service"])
+        self.assertIn("ModemManager.service", unit["Unit"]["Conflicts"].split())
+        self.assertIn("ModemManager.service", unit["Unit"]["After"].split())
+        self.assertGreater(int(unit["Service"]["TimeoutStartSec"]), 120)
 
     def test_installer_rejects_floating_shell_refs_before_network(self):
         result = subprocess.run(["bash", str(HERE / "tools/install-baseband.sh"),
