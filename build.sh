@@ -239,6 +239,7 @@ apply_overlay() {
 }
 apply_overlay "$HERE/overlay/common" "$ROOTFS"
 apply_overlay "$HERE/overlay/$DEVICE" "$ROOTFS"
+apply_overlay "$HERE/ui/$UI/$DEVICE" "$ROOTFS"
 
 log "6. identity, users, fstab"
 echo "$HOSTNAME_OVERRIDE" > "$ROOTFS/etc/hostname"
@@ -316,6 +317,11 @@ checks=("$ROOTFS" --device "$DEVICE" --user "$DEFAULT_USER" --init "$INIT_SYSTEM
 	--phosh-unit "${PHOSH_UNIT:-greetd.service}")
 if [ "$UI" = phosh ]; then
 	distro_chroot "$ROOTFS" glib-compile-schemas --strict /usr/share/glib-2.0/schemas
+	if [ "$DEVICE" = qqcandy ]; then
+		filter="$(distro_chroot "$ROOTFS" env GSETTINGS_BACKEND=memory \
+			gsettings get sm.puri.phosh app-filter-mode)"
+		[ "$filter" = '@as []' ] || die 'qqcandy Phosh must show all installed applications'
+	fi
 	distro_chroot "$ROOTFS" gsettings list-schemas > "$WORK/glib-schemas.txt"
 	checks+=(--gsettings-schemas "$WORK/glib-schemas.txt")
 fi

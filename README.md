@@ -55,6 +55,15 @@ validated device boot; the builder never builds or flashes that boot.
 Nura Phosh includes the complete `_pmb_recommends` lists from the pinned
 Phosh, GNOME Mobile, GNOME and base UI recipes, including fonts and languages.
 Direct APK installation alone does not expand those lists.
+See [Nura application selection](docs/nura-apps.md) for the upstream sources,
+complete package list and the distinction between installed apps and hardware
+support. The qqcandy Nura, Arch and Mobian userspace builds at `1495876` passed CI.
+On-device Nura checks confirmed
+all 40 recommendation packages, 17 main launchers and activation of Contacts
+and Text Editor. This is not acceptance of every app's hardware features.
+qqcandy Phosh builds show all installed applications by default, including
+those not marked adaptive. Cutout candidates remain on-device experiments
+until their layout is accepted; they are not yet included in these images.
 
 On hosts whose ARM64 binfmt handler is occupied by Android/Waydroid, the
 optional `tools/with-qemu.sh` provides private user/mount/PID/binfmt namespaces
