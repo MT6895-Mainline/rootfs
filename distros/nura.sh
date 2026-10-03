@@ -7,6 +7,7 @@ DISTRO_DEFAULT_SUITE=edge
 INIT_SYSTEM=openrc
 ADMIN_GROUP=wheel
 VAAPI_BUILD_PACKAGES="build-base libva-dev libdrm-dev linux-headers pkgconf"
+BASEBAND_BUILD_PACKAGES="build-base meson ninja pkgconf gettext-dev libxslt python3 glib-dev dbus-dev libgudev-dev eudev-dev polkit-dev"
 PMBOOTSTRAP_COMMIT=b31c99504d70ec7b8e2e6e47eb84262bd7114e94
 PMAPORTS_COMMIT=5f7529d92dcc1c41b2bfb6a7b3e09df8fafc0a34
 

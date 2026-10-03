@@ -54,6 +54,9 @@ USER_PASSWORD="${USER_PASSWORD:-1234}"
 UI=phosh
 ROOTFS_ONLY=0
 VAAPI=auto
+BASEBAND=auto
+BASEBAND_OWNER_REF=latest
+BASEBAND_MM_REF=latest
 WIFI_SSID=""
 WIFI_PASSWORD=""
 # Kernel make arguments, e.g. "LLVM=1" for clang builds (profile sets it).
@@ -86,6 +89,9 @@ while [ $# -gt 0 ]; do
 		--ui) UI="${2:?}"; shift 2 ;;
 		--rootfs-only) ROOTFS_ONLY=1; MAKE_IMAGE=0; shift ;;
 		--vaapi) VAAPI="${2:?}"; shift 2 ;;
+		--baseband) BASEBAND="${2:?}"; shift 2 ;;
+		--baseband-owner-ref) BASEBAND_OWNER_REF="${2:?}"; shift 2 ;;
+		--baseband-mm-ref) BASEBAND_MM_REF="${2:?}"; shift 2 ;;
 		--mirror) MIRROR="${2:?}"; shift 2 ;;
 		--out) OUT="${2:?}"; shift 2 ;;
 		--ts) TS="${2:?}"; shift 2 ;;
@@ -122,12 +128,18 @@ done
 [[ "$DEVICE" =~ ^[a-z0-9-]+$ && "$DISTRO" =~ ^[a-z0-9-]+$ ]] || die "invalid profile name"
 case "$UI" in console|phosh) ;; *) die "--ui must be console or phosh" ;; esac
 case "$VAAPI" in auto|on|off) ;; *) die "--vaapi must be auto, on or off" ;; esac
+case "$BASEBAND" in auto|on|off) ;; *) die "--baseband must be auto, on or off" ;; esac
+for ref in "$BASEBAND_OWNER_REF" "$BASEBAND_MM_REF"; do
+	[[ "$ref" = latest || "$ref" =~ ^[0-9a-f]{40}$ ]] || die 'baseband refs must be latest or full commit IDs'
+done
 [[ "$TS" =~ ^[0-9-]+$ && "$JOBS" =~ ^[1-9][0-9]*$ ]] || die "invalid timestamp/jobs"
 [ -f "$HERE/devices/$DEVICE.conf" ] || die "no profile for device '$DEVICE'"
 [ -f "$HERE/distros/$DISTRO.sh" ] || die "no distro backend 'distros/$DISTRO.sh'"
 
 # shellcheck source=/dev/null
 . "$HERE/devices/$DEVICE.conf"
+[ "$BASEBAND" != on ] || [ -n "${BASEBAND_OWNER_REPO:-}" ] || die 'profile has no baseband support'
+BASEBAND_INSTALLED=0
 
 : "${KERNEL_BRANCH:?profile must set KERNEL_BRANCH}"
 : "${KERNEL_CONFIGS:?profile must set KERNEL_CONFIGS}"
@@ -368,6 +380,15 @@ install_vaapi_driver() {
 
 install_vaapi_driver
 
+if [ "$BASEBAND" != off ]; then
+	if [ -n "${BASEBAND_OWNER_REPO:-}" ]; then
+		log '4b. install tested baseband userspace (no automatic hardware startup)'
+		bash "$HERE/tools/install-baseband.sh" --root "$ROOTFS" --device "$DEVICE" --distro "$DISTRO" \
+			--owner-ref "$BASEBAND_OWNER_REF" --mm-ref "$BASEBAND_MM_REF" --jobs "$JOBS"
+		BASEBAND_INSTALLED=1
+	fi
+fi
+
 if [ -n "${QUIRKS_REPO:-}" ]; then
 	git clone --filter=blob:none "$QUIRKS_REPO" "$WORK/quirks"
 	git -C "$WORK/quirks" checkout --detach "${QUIRKS_COMMIT:?profile must pin quirks}"
@@ -463,6 +484,7 @@ checks=("$ROOTFS" --device "$DEVICE" --user "$DEFAULT_USER" --init "$INIT_SYSTEM
 	--ui "$UI" --kernel "$KVER" --ssh-unit "${SSH_UNIT:-ssh.service}"
 	--phosh-unit "${PHOSH_UNIT:-greetd.service}")
 [ -z "$ROOT_PASSWORD" ] || checks+=(--allow-root-password)
+[ "$BASEBAND_INSTALLED" = 0 ] || checks+=(--baseband)
 if [ "$ROOTFS_ONLY" = 0 ] && [ -z "$KERNEL_CONFIG_FILE" ]; then
 	for module in ${KERNEL_REQUIRED_MODULES:-}; do
 		checks+=(--required-module "$module")

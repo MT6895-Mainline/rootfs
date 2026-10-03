@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+bundle=$(readlink -f /usr/lib/mtk-ccci/current)
+case "$bundle" in /usr/lib/mtk-ccci/releases/*) ;; *) exit 1 ;; esac
+export LD_LIBRARY_PATH="$bundle/mm/lib"
+exec "$bundle/mm/sbin/ModemManager" "$@"

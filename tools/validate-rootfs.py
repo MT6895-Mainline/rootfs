@@ -2,8 +2,10 @@
 """Check offline image contracts without booting or changing target hardware."""
 import argparse
 import configparser
+import json
 import os
 from pathlib import Path
+import re
 import struct
 
 
@@ -70,6 +72,54 @@ def require_modules(directory, names):
             raise ValueError(f"missing required kernel module: {name}")
 
 
+def validate_baseband(root, bundle_path=None):
+    manifest_path = (rooted(root, bundle_path) / "manifest.json" if bundle_path else
+                     root / "usr/share/mt6895-build/baseband.json")
+    manifest = json.loads(manifest_path.read_text())
+    if (manifest.get("schema") != 1 or manifest.get("device") != "qqcandy" or
+            manifest.get("distro") not in ("mobian", "debian", "arch", "nura") or
+            manifest.get("autostart") is not False or manifest.get("hardware_validated") is not False):
+        raise ValueError("invalid baseband installation or hardware claims")
+    commits = [manifest.get(name, "") for name in ("owner_commit", "mm_commit")]
+    if not all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{40}", value) for value in commits):
+        raise ValueError("baseband sources are not immutable commits")
+    release = "-".join(commits)
+    base = root / "usr/lib/mtk-ccci"
+    if not bundle_path and os.readlink(base / "current") != "releases/" + release:
+        raise ValueError("baseband manifest/current release mismatch")
+    bundle = rooted(root, bundle_path or "/usr/lib/mtk-ccci/current")
+    if bundle != base / "releases" / release:
+        raise ValueError("baseband release path differs from its source commits")
+    if json.loads((bundle / "manifest.json").read_text()) != manifest:
+        raise ValueError("baseband bundle manifest mismatch")
+    for name in ("mm/sbin/ModemManager", "mm/lib/ModemManager/libmm-plugin-mtk-soc.so"):
+        aarch64(bundle / name)
+    for name in ("owner/libexec/mtk-ccci/start_owner.py", "owner/libexec/mtk-ccci/mdinit.py"):
+        if not (bundle / name).is_file():
+            raise ValueError(f"missing baseband owner: {name}")
+    if not rooted(root, str((bundle / "mm/lib/libmm-glib.so.0").relative_to(root))).is_file():
+        raise ValueError("missing private MM library")
+    for name in ("ModemManager", "start-owner", "wait-ready.py"):
+        if not (root / "usr/libexec/mtk-ccci" / name).stat().st_mode & 0o111:
+            raise ValueError(f"baseband entrypoint is not executable: {name}")
+    if not (root / "etc/udev/rules.d/77-mm-mtk-soc.rules").is_file():
+        raise ValueError("missing MTK modem udev rule")
+    for service in ("mtk-ccci-owner", "mtk-modemmanager"):
+        if manifest["distro"] == "nura":
+            unit = root / "etc/init.d" / service
+            if not unit.is_file() or not unit.stat().st_mode & 0o111:
+                raise ValueError(f"missing executable OpenRC baseband service: {service}")
+        elif not (root / "usr/lib/systemd/system" / (service + ".service")).is_file():
+            raise ValueError(f"missing systemd baseband service: {service}")
+    for unit in ("mtk-ccci-owner.service", "mtk-modemmanager.service"):
+        if enabled(root, unit) or any((root / "etc/systemd/system").glob(f"*.requires/{unit}")):
+            raise ValueError("unvalidated baseband service automatically enabled")
+    for service in ("mtk-ccci-owner", "mtk-modemmanager"):
+        if any((root / "etc/runlevels").glob(f"*/{service}")):
+            raise ValueError("unvalidated OpenRC baseband service automatically enabled")
+    print(f"Baseband installation contracts passed: {release}; hardware startup not validated")
+
+
 def validate(args):
     root = args.root.resolve()
     aarch64(rooted(root, "/sbin/init"))
@@ -132,6 +182,8 @@ def validate(args):
         if len(drivers) != 1:
             raise ValueError("expected exactly one VA-API driver")
         aarch64(drivers[0])
+    if args.baseband:
+        validate_baseband(root)
     if args.kernel != "none":
         modules = rooted(root, "/lib/modules")
         if sorted(path.name for path in modules.iterdir()) != [args.kernel]:
@@ -154,6 +206,7 @@ def main():
     parser.add_argument("--kernel", default="none")
     parser.add_argument("--required-module", action="append", default=[])
     parser.add_argument("--vaapi", action="store_true")
+    parser.add_argument("--baseband", action="store_true")
     parser.add_argument("--allow-root-password", action="store_true")
     args = parser.parse_args()
     try:

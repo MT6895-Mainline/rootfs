@@ -19,6 +19,11 @@ on:
         description: "Validate userspace only (no deployable kernel/image)"
         type: boolean
         default: false
+      baseband:
+        description: "Install baseband userspace; hardware startup remains gated"
+        type: choice
+        options: [auto, "on", "off"]
+        default: auto
       publish_release:
         description: "Publish only after all selected builds succeed"
         type: boolean
@@ -81,10 +86,11 @@ jobs:
           SUFFIX: ${{ matrix.suffix }}
           UI: ${{ inputs.ui }}
           USERSPACE_ONLY: ${{ inputs.userspace_only }}
+          BASEBAND: ${{ inputs.baseband }}
           TS: ${{ needs.prepare.outputs.ts }}
         run: |
           set -euo pipefail
-          args=(--device "$DEVICE" --distro "$DISTRO" --ui "$UI"
+          args=(--device "$DEVICE" --distro "$DISTRO" --ui "$UI" --baseband "$BASEBAND"
                 --ts "$TS" --out "$PWD/out" --jobs 2 --tar)
           if [ "$USERSPACE_ONLY" = true ]; then
             args+=(--rootfs-only)

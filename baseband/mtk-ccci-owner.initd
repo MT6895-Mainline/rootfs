@@ -1,0 +1,19 @@
+#!/sbin/openrc-run
+# shellcheck shell=sh
+description="MediaTek CCCI modem owner"
+command="/usr/libexec/mtk-ccci/start-owner"
+command_background=yes
+pidfile="/run/mtk-ccci/owner.pid"
+
+depend() {
+	need localmount
+}
+
+start_pre() {
+	[ -f /etc/default/mtk-ccci ] || return 1
+	set -a
+	. /etc/default/mtk-ccci
+	set +a
+	checkpath --directory --mode 0700 /run/mtk-ccci || return 1
+	"$command" --check
+}

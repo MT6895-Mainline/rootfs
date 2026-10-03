@@ -1,0 +1,16 @@
+#!/sbin/openrc-run
+# shellcheck shell=sh
+description="MediaTek CCCI ModemManager bundle"
+command="/usr/libexec/mtk-ccci/ModemManager"
+command_background=yes
+pidfile="/run/mtk-ccci/modemmanager.pid"
+
+depend() {
+	need dbus mtk-ccci-owner
+}
+
+start_pre() {
+	# Never create a second owner of the ModemManager D-Bus name.
+	! rc-service modemmanager status >/dev/null 2>&1 || return 1
+	/usr/bin/python3 /usr/libexec/mtk-ccci/wait-ready.py
+}

@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+bundle=$(readlink -f /usr/lib/mtk-ccci/current)
+case "$bundle" in /usr/lib/mtk-ccci/releases/*) ;; *) exit 1 ;; esac
+exec /usr/bin/python3 "$bundle/owner/libexec/mtk-ccci/start_owner.py" "$@"

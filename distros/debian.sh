@@ -8,6 +8,8 @@ ADMIN_GROUP=sudo
 SSH_UNIT=ssh.service
 PHOSH_UNIT=greetd.service
 VAAPI_BUILD_PACKAGES="build-essential libva-dev libdrm-dev pkg-config"
+BASEBAND_BUILD_PACKAGES="build-essential meson ninja-build pkg-config gettext xsltproc python3 \
+libglib2.0-dev libdbus-1-dev libgudev-1.0-dev libudev-dev libpolkit-gobject-1-dev libsystemd-dev"
 
 debian_keyring() {
 	local dir="$WORK/debian-trust" file fingerprint actual

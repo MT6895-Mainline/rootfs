@@ -89,8 +89,16 @@ PCM0/DL1 headphone route. Xaga's microphone-switch daemon is not installed.
 VCP driver installation does **not** validate or activate qqcandy's VCP
 hardware/firmware ABI. No global `LIBVA_DRIVER_NAME` is exported.
 `--vaapi off` skips building the component; `on` requires a configured profile.
-Neither CCCI owner services nor experimental ModemManager forks are installed
-or enabled automatically. IMS/VoLTE are not claimed working by this builder.
+qqcandy now defaults to automatic baseband user-space installation at build
+time. Owner and a matching complete MM/mtk-soc bundle are resolved from the
+organization repositories, tested and installed in an isolated versioned
+directory, leaving distribution MM/client libraries intact. `--baseband off`
+disables this integration; `on` requires a reviewed device profile.
+`--baseband-owner-ref` and `--baseband-mm-ref` accept `latest` (the default)
+or full source commits. The manifest records the resolved pair.
+See [baseband installation](docs/baseband.md) for the standalone offline
+installer and layout. Installed services are not automatically enabled until
+board startup is validated. IMS/VoLTE are not claimed working by this builder.
 
 ## Kernel and Artifacts
 
@@ -110,8 +118,9 @@ Its fixups exclude the mainline CMDQ helper that conflicts with mediatek_v2.
 The incomplete, opt-in `ccci_diag` bring-up experiment is also excluded from
 normal images as a **WORKAROUND**, not repaired with a stub; production CCCI
 source is unchanged. The qqcandy profile builds production ECCCI/CCIF as
-loadable modules, matching the device's configuration, without adding an MD
-owner service. Re-enable diagnostics only after separate source/hardware review.
+loadable modules, matching the device's configuration. The userspace installer
+does not load these modules or ignite MD. Re-enable diagnostics only after
+separate source/hardware review.
 Module-directory mismatches fail rather than silently changing the expected
 release. `KERNEL-INFO` records the resolved commit, configuration and release.
 Flash/use Image, DTB and rootfs modules as a matched set: a shared `uname -r`
@@ -151,9 +160,17 @@ The first-boot service grows ext4 and generates per-installation SSH keys.
 | Mobian / Phrog | Passed: Image, DTB, modules, tar, ext4 and checksums | `5318d97`, [job](https://github.com/MT6895-Mainline/rootfs/actions/runs/37083419238/job/111088654679) |
 
 All three distributions' downloaded artifacts also passed independent checksum, rootfs-content
-and read-only ext4 checks. Current script checks pass all 13 offline tests.
+and read-only ext4 checks. Current script checks pass all 23 offline tests.
 The full profile requires the four production ECCCI modules; successful
 compilation does not mean an MD owner or working IMS has been installed.
+
+These complete-image snapshots precede the automatic baseband installer.
+Their original accepted artifacts remain unchanged; installation tests for
+the new bundle are a separate acceptance stage, not retroactive hardware proof.
+In separate offline ARM64 Mobian, Arch and Nura rootfs copies, the new installer
+passed native builds, owner protocol checks, all 18 MM suites, version execution,
+installation/content contracts and same-source repeat installation. Services
+were not started. See [baseband validation](docs/baseband.md#validation-scope).
 
 qqcandy punch-hole adaptation is not yet included. Phosh's native notch handling
 needs matching gmobile device data; Android's display overlay is not a Linux

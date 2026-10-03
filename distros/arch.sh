@@ -8,6 +8,7 @@ ADMIN_GROUP=wheel
 SSH_UNIT=sshd.service
 PHOSH_UNIT=gdm.service
 VAAPI_BUILD_PACKAGES="base-devel libva libdrm"
+BASEBAND_BUILD_PACKAGES="base-devel meson ninja pkgconf gettext libxslt python glib2 glib2-devel dbus libgudev polkit systemd"
 ARCH_SIGNING_KEY=68B3537F39A313B3E574D06777193F152BDBE6A6
 ARCH_ROOTFS_URL="${ARCH_ROOTFS_URL:-https://de3.mirror.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz}"
 
