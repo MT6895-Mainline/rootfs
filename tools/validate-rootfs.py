@@ -72,6 +72,30 @@ def require_modules(directory, names):
             raise ValueError(f"missing required kernel module: {name}")
 
 
+def validate_identity(root, init):
+    machine_id = root / "etc/machine-id"
+    dbus_id = root / "var/lib/dbus/machine-id"
+    if dbus_id.exists() or dbus_id.is_symlink():
+        raise ValueError("image contains a D-Bus machine identity")
+    if init == "openrc":
+        if machine_id.exists() or machine_id.is_symlink():
+            raise ValueError("OpenRC image must omit machine-id, not leave an empty file")
+    elif machine_id.is_symlink() or machine_id.read_bytes() != b"":
+        raise ValueError("systemd image must have an empty machine-id")
+
+
+def validate_phosh_schemas(root, schemas):
+    if schemas is None:
+        raise ValueError("Phosh validation needs target gsettings list-schemas output")
+    available = set(schemas.read_text().splitlines())
+    required = {"sm.puri.phosh"}
+    if rooted(root, "/usr/bin/phosh-osk-stevia").is_file():
+        required.add("mobi.phosh.osk")
+    missing = required - available
+    if missing:
+        raise ValueError("missing compiled runtime schemas: " + ", ".join(sorted(missing)))
+
+
 def validate_baseband(root, bundle_path=None):
     manifest_path = (rooted(root, bundle_path) / "manifest.json" if bundle_path else
                      root / "usr/share/mt6895-build/baseband.json")
@@ -139,8 +163,7 @@ def validate(args):
         raise ValueError("image contains installation-specific SSH keys")
     if os.readlink(root / "etc/resolv.conf") != "/run/NetworkManager/resolv.conf":
         raise ValueError("wrong runtime DNS provider")
-    if (root / "etc/machine-id").read_text().strip():
-        raise ValueError("image has a pre-generated machine identity")
+    validate_identity(root, args.init)
     if (root / "var/lib/mt6895-firstboot-done").exists():
         raise ValueError("firstboot was already marked done")
     if not (root / "usr/local/sbin/mt6895-firstboot").stat().st_mode & 0o111:
@@ -173,6 +196,7 @@ def validate(args):
     if args.ui == "phosh":
         if not rooted(root, "/usr/bin/phosh-session").is_file():
             raise ValueError("missing Phosh session")
+        validate_phosh_schemas(root, args.gsettings_schemas)
     if args.device == "qqcandy":
         ucm = root / "usr/share/alsa/ucm2/MediaTek/qqcandy/HiFi.conf"
         if not ucm.is_file():
@@ -184,13 +208,19 @@ def validate(args):
         aarch64(drivers[0])
     if args.baseband:
         validate_baseband(root)
-    if args.kernel != "none":
-        modules = rooted(root, "/lib/modules")
+    modules = rooted(root, "/lib/modules")
+    if args.kernel == "none":
+        if modules.exists() and any(modules.iterdir()):
+            raise ValueError("unexpected kernel modules without an external import")
+    else:
         if sorted(path.name for path in modules.iterdir()) != [args.kernel]:
             raise ValueError("kernel/module directory mismatch")
         if not (modules / args.kernel / "modules.dep").is_file():
             raise ValueError("missing modules.dep")
         require_modules(modules / args.kernel, args.required_module)
+        manifest = json.loads(rooted(root, "/usr/share/mt6895-build/kernel-modules.json").read_text())
+        if manifest.get("release") != args.kernel or manifest.get("hardware_validated") is not False:
+            raise ValueError("invalid external module manifest")
     print(f"Rootfs contracts passed: {args.device}, {args.init}, {args.ui}, kernel={args.kernel}")
 
 
@@ -203,6 +233,7 @@ def main():
     parser.add_argument("--ui", choices=("phosh", "console"), required=True)
     parser.add_argument("--ssh-unit", default="ssh.service")
     parser.add_argument("--phosh-unit", default="greetd.service")
+    parser.add_argument("--gsettings-schemas", type=Path)
     parser.add_argument("--kernel", default="none")
     parser.add_argument("--required-module", action="append", default=[])
     parser.add_argument("--vaapi", action="store_true")

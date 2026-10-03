@@ -13,6 +13,7 @@ class MatrixTests(unittest.TestCase):
         result = module.matrix("qqcandy", "mobian arch nura")["include"]
         self.assertEqual(len(result), 3)
         self.assertEqual({r["distro"] for r in result}, {"mobian", "arch", "nura"})
+        self.assertTrue(all("kernel" not in entry for entry in result))
 
     def test_legacy_variant_uses_real_profile(self):
         entry = module.matrix("xaga-6.18", "arch")["include"][0]

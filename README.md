@@ -1,7 +1,8 @@
 # MT6895-Mainline rootfs
 
-Root filesystem builds for MT6895 devices, with matching kernel Image, DTB
-and modules. Device-specific hardware assumptions live in explicit profiles.
+ARM64 userspace root filesystem builds for MT6895 devices. Kernel, DTB,
+initramfs and boot images belong to the separate boot-chain repositories.
+Device-specific hardware assumptions live in explicit profiles.
 
 ## Distributions
 
@@ -26,11 +27,10 @@ On Debian/Ubuntu, as root, install the dependencies listed in
 
 ```sh
 git clone https://github.com/MT6895-Mainline/rootfs
-git clone -b 6.18-mt6895-oplus-qqcandy https://github.com/MT6895-Mainline/linux
 cd rootfs
-sudo bash ./build.sh --device qqcandy --distro mobian --kernel-repo ../linux
-sudo bash ./build.sh --device qqcandy --distro arch --kernel-repo ../linux
-sudo bash ./build.sh --device qqcandy --distro nura --kernel-repo ../linux
+sudo bash ./build.sh --device qqcandy --distro mobian
+sudo bash ./build.sh --device qqcandy --distro arch
+sudo bash ./build.sh --device qqcandy --distro nura
 ```
 
 Default UI is Phosh; `--ui console` selects a console build.
@@ -42,15 +42,19 @@ Actions **rootfs** offers a strict device/distribution matrix and optionally
 publishes a **draft** release only after every selected build succeeds.
 Workflow parameters are not interpolated as shell source.
 
-User-space-only validation avoids compiling a kernel:
+Every build is userspace-only. To export a tar archive without an ext4 image:
 
 ```sh
 sudo bash ./build.sh --device qqcandy --distro mobian \
-  --rootfs-only --ui console --tar --stage-rootfs 1
+  --no-image --ui console --tar --stage-rootfs 1
 ```
 
-These outputs are explicitly named `userspace-only-*` and are **not deployable**.
-No rootfs image, kernel Image or kernel modules are produced in this mode.
+`--rootfs-only` remains a compatibility alias for `--no-image --tar`.
+The default still produces a rootfs ext4 image. All images require a separately
+validated device boot; the builder never builds or flashes that boot.
+Nura Phosh includes the complete `_pmb_recommends` lists from the pinned
+Phosh, GNOME Mobile, GNOME and base UI recipes, including fonts and languages.
+Direct APK installation alone does not expand those lists.
 
 On hosts whose ARM64 binfmt handler is occupied by Android/Waydroid, the
 optional `tools/with-qemu.sh` provides private user/mount/PID/binfmt namespaces
@@ -68,9 +72,10 @@ host/CI runner instead. Do not disable unrelated host interpreters.
 | xaga | 7.2-mt6895-xiaomi-xaga | device profile |
 | rubens | port/rubens-clean | provisional profile |
 
-The workflow's `xaga-6.18` variant uses the xaga profile and overrides the
-kernel ref to `6.18-mt6895-xiaomi-xaga`. Locally use `--device xaga
---kernel-ref 6.18-mt6895-xiaomi-xaga --name-suffix -6.18`.
+Kernel branches above are external references, not rootfs build inputs.
+The legacy `xaga-6.18` workflow alias only selects xaga userspace and its
+artifact suffix. It no longer builds or selects a different kernel.
+Locally use `--device xaga --name-suffix -6.18` for that naming convention.
 Partition numbers are **not** SoC-wide facts. Never apply another board's
 partition, charger, GPIO, firmware, touch or fingerprint configuration.
 
@@ -100,52 +105,37 @@ See [baseband installation](docs/baseband.md) for the standalone offline
 installer and layout. Installed services are not automatically enabled until
 board startup is validated. IMS/VoLTE are not claimed working by this builder.
 
-## Kernel and Artifacts
+## Userspace Artifacts
 
 ```text
 rootfs-<device>-<distro>[-<suffix>]-<timestamp>-sparse.img[.gz]
 rootfs-<device>-<distro>[-<suffix>]-<timestamp>.tar.zst   (--tar)
-Image-<device>-<distro>
-dtb-<device>-<distro>.dtb
-initramfs-qqcandy-<distro>.cpio
-initramfs-qqcandy-<distro>.json
-KERNEL-INFO-<device>-<distro>.txt
+USERSPACE-INFO-<device>-<distro>.txt
+MODULES-<device>-<distro>.json                         (external import only)
 SHA256SUMS
 ```
 
-A fresh source export builds **Image**, the requested board DTB and modules.
-For qqcandy it first builds a pinned initramfs revision, packages identical
-`/init` and `/xinit` entries, and embeds that archive with
-`CONFIG_INITRAMFS_SOURCE`. The kernel forces
-`rdinit=/xinit`; attaching only an external ramdisk is not a validated boot
-route. The init applies the device's verified UFS keep-awake policy before
-persistent IO. The archive and source/hash manifest accompany the matched
-kernel artifacts; this does not itself claim a successful device boot.
-Bootloader arguments remain intact. This ARM64 tree gates `INITRAMFS_FORCE`
-behind command-line forcing, so the builder does not enable that option or
-replace the bootloader command line merely to ignore an external ramdisk.
-Host builds need `gcc-aarch64-linux-gnu`, `cpio` and `lz4` in addition to
-the LLVM kernel toolchain. `--initramfs-repo` and `--initramfs-ref` (full
-commit ID only) allow a local pinned source checkout. Other profiles do not
-inherit this qqcandy boot contract. `--rootfs-only` does not build initramfs.
-The qqcandy audio fragment keeps the MT6895 AFE built-in, matching the built-in
-SCP's semaphore-notifier dependency, and selects its MT6368 codec/machine.
-Its fixups exclude the mainline CMDQ helper that conflicts with mediatek_v2.
-The incomplete, opt-in `ccci_diag` bring-up experiment is also excluded from
-normal images as a **WORKAROUND**, not repaired with a stub; production CCCI
-source is unchanged. The qqcandy profile builds production ECCCI/CCIF as
-loadable modules, matching the device's configuration. The userspace installer
-does not load these modules or ignite MD. Re-enable diagnostics only after
-separate source/hardware review.
-Module-directory mismatches fail rather than silently changing the expected
-release. `KERNEL-INFO` records the resolved commit, configuration and release.
-Flash/use Image, DTB and rootfs modules as a matched set: a shared `uname -r`
-alone does not prove matching source, configuration or symbol versions.
-Existing-device matching can use `--kernel-config FILE` and
-`--kernel-localversion SUFFIX`; do not mix a newly built rootfs with an old boot
-image merely because both claim 6.18.
+No kernel checkout, compiler, DTB or initramfs build is part of this pipeline.
+Legacy kernel/initramfs build flags fail with a migration message. Retained
+`configs/` files are historical references, not active build inputs.
 
-This repo does **not** pack boot.img or flash anything. Userdata deployment
+Optional matching modules can be imported from an external kernel build:
+
+```sh
+sudo bash ./build.sh --device qqcandy --distro nura \
+  --modules /path/to/lib/modules/6.18.0+ --kernel-release 6.18.0+
+```
+
+Both flags are required together. The importer checks the single release
+directory, ARM64 relocatable ELF headers, release and consistent full vermagic,
+rejects symlinks/special files (excluding build/source) and records source hashes.
+It never strips, rebuilds, loads or forces modules. `depmod` regenerates indexes.
+The manifest is also stored at `/usr/share/mt6895-build/kernel-modules.json`.
+These checks do **not** prove boot configuration, symbol CRC or signature-policy
+compatibility: supply modules from the exact validated boot build. Without an
+import, module-dependent hardware needs matching modules installed separately.
+
+This repo does **not** build boot.img or flash anything. Userdata deployment
 erases existing user data; boot-chain validation and board-specific recovery
 must precede deployment. Do not assume an in-system reboot can enter fastboot.
 Use the documented qqcandy deployment procedure and keep a verified backup.
@@ -163,11 +153,14 @@ Default local user is the profile's `DEFAULT_USER` (qqcandy: `mobian`), PIN
 Root is locked unless explicitly configured locally; SSH root/password login
 is disabled. Use SSH public keys for remote access. Public workflow inputs
 do not accept passwords, WiFi credentials or private firmware URLs.
-The first-boot service grows ext4 and generates per-installation SSH keys.
+The first-boot service grows ext4 and generates per-installation SSH keys and
+machine identity. OpenRC images omit machine-id; systemd images keep its empty
+stub. Identity initialization precedes D-Bus, even with an old completion marker.
+Phosh builds check target compiled schemas; Nura installs Stevia's split schemas.
 
 ## Verification
 
-### Current Validation (2026-10-03)
+### Historical Full Builds (2026-10-03)
 
 | qqcandy / Phosh | Full build | Build source / evidence |
 | --- | --- | --- |
@@ -175,10 +168,10 @@ The first-boot service grows ext4 and generates per-installation SSH keys.
 | Nura / OpenRC | Passed: Image, DTB, modules, tar, ext4 and checksums | `01475dc`, [job](https://github.com/MT6895-Mainline/rootfs/actions/runs/37047995064/job/110974148374) |
 | Mobian / Phrog | Passed: Image, DTB, modules, tar, ext4 and checksums | `5318d97`, [job](https://github.com/MT6895-Mainline/rootfs/actions/runs/37083419238/job/111088654679) |
 
-All three distributions' downloaded artifacts also passed independent checksum, rootfs-content
-and read-only ext4 checks. Current script checks pass all 24 offline tests.
-The full profile requires the four production ECCCI modules; successful
-compilation does not mean an MD owner or working IMS has been installed.
+All three historical distributions' artifacts passed independent checksum,
+rootfs-content and read-only ext4 checks. Those builds used the former combined
+kernel pipeline. They do not validate the current userspace-only pipeline or
+retroactively contain the identity/schema/application-list fixes.
 
 These complete-image snapshots precede the automatic baseband installer.
 Their original accepted artifacts remain unchanged; installation tests for
@@ -188,7 +181,20 @@ passed native builds, owner protocol checks, all 18 MM suites, version execution
 installation/content contracts and same-source repeat installation. Services
 were not started. See [baseband validation](docs/baseband.md#validation-scope).
 
-qqcandy punch-hole adaptation is not yet included. Phosh's native notch handling
+### Current Fixes
+
+The original validated qqcandy #532 boot starts the tested Nura userspace.
+Empty machine-id and missing Stevia schemas were repaired without a kernel
+change; the user confirmed desktop/keyboard, then Wi-Fi/Bluetooth after another
+boot. This is not baseband/IMS acceptance. Offline builder tests cover identity
+ordering/failure, schema queries, full pinned Nura recommendations and external
+module imports. Separate ARM64 first-boot tests cover nine cases.
+Replacement full three-distribution builds remain a separate acceptance stage;
+historical successful builds above are not a substitute.
+
+Auxiliary ap0/wlan1/p2p0 interfaces are unmanaged by default on qqcandy; wlan0
+and USB networking remain managed. Developer tooling can opt those interfaces
+back in. Punch-hole adaptation is not yet included. Phosh's native notch handling
 needs matching gmobile device data; Android's display overlay is not a Linux
 desktop configuration. Exact top-bar height, greeter, rotation and reserved
 application space require separate validation, not a CSS-only height change.

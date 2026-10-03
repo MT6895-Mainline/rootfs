@@ -10,6 +10,15 @@ VAAPI_BUILD_PACKAGES="build-base libva-dev libdrm-dev linux-headers pkgconf"
 BASEBAND_BUILD_PACKAGES="build-base meson ninja pkgconf gettext-dev libxslt python3 glib-dev dbus-dev libgudev-dev eudev-dev polkit-dev"
 PMBOOTSTRAP_COMMIT=b31c99504d70ec7b8e2e6e47eb84262bd7114e94
 PMAPORTS_COMMIT=5f7529d92dcc1c41b2bfb6a7b3e09df8fafc0a34
+# _pmb_recommends from the pinned Phosh/GNOME Mobile/GNOME/base UI APKBUILDs.
+# Direct apk bootstrap does not expand pmbootstrap's recommendations.
+NURA_PHOSH_RECOMMENDS="phosh-mobile-settings phosh-tour \
+calls chatty lpa-gtk mobile-config-firefox postmarketos-tweaks-setting-definitions ttyescape vvmplayer \
+cups decibels firefox-esr flatpak fprintd g4music gnome-calculator gnome-calendar \
+gnome-clocks gnome-console gnome-contacts gnome-maps gnome-text-editor gnome-user-share \
+gnome-weather gst-libav gst-plugins-bad gst-plugins-good gst-plugins-rs-dav1d gvfs-full \
+loupe nautilus papers rygel showtime snapshot tuned-ppd \
+font-droid font-droid-nonlatin font-twemoji lang"
 
 pmb() {
 	python3 "$WORK/pmbootstrap/pmbootstrap.py" --as-root --details-to-stdout \
@@ -53,7 +62,10 @@ EOF
 		modemmanager modemmanager-openrc iio-sensor-proxy alsa-ucm-conf \
 		alsa-utils e2fsprogs util-linux kmod ca-certificates
 	if [ "$UI" = phosh ]; then
-		pmb chroot -r -- apk add postmarketos-ui-phosh postmarketos-ui-phosh-openrc
+		# Stevia's main package currently omits its split runtime schemas.
+		pmb chroot -r -- apk add postmarketos-ui-phosh postmarketos-ui-phosh-openrc stevia-schemas
+		# shellcheck disable=SC2086
+		pmb chroot -r -- apk add $NURA_PHOSH_RECOMMENDS
 	fi
 	# Upstream shutdown unregisters ALL host QEMU handlers, even pre-existing
 	# ones. Only detach this build's mounts, retaining host interpreter state.
@@ -71,6 +83,11 @@ deviceinfo_codename="$DEVICE"
 deviceinfo_arch="aarch64"
 deviceinfo_chassis="handset"
 EOF
+	if [ "$UI" = phosh ]; then
+		install -d "$root/usr/share/mt6895-build"
+		printf '%s\n' "$PMAPORTS_COMMIT" "$NURA_PHOSH_RECOMMENDS" > \
+			"$root/usr/share/mt6895-build/nura-phosh-recommends.txt"
+	fi
 }
 
 distro_install_packages() {
@@ -91,7 +108,9 @@ distro_finalize() {
 	local root="$1"
 	rm -f "$root/etc/systemd/system/mt6895-firstboot.service"
 	distro_chroot "$root" rc-update add mt6895-firstboot default
-	rm -f "$root/etc/resolv.conf" "$root/etc/ssh/ssh_host_"*
+	# OpenRC's D-Bus start hook generates a missing ID, not an empty one.
+	rm -f "$root/etc/machine-id" "$root/var/lib/dbus/machine-id" \
+		"$root/etc/resolv.conf" "$root/etc/ssh/ssh_host_"*
 	ln -s /run/NetworkManager/resolv.conf "$root/etc/resolv.conf"
 	find "$root/var/cache" -type f -delete
 }

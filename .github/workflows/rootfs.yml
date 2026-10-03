@@ -16,7 +16,7 @@ on:
         options: [phosh, console]
         default: phosh
       userspace_only:
-        description: "Validate userspace only (no deployable kernel/image)"
+        description: "Tar-only export; all builds are userspace-only"
         type: boolean
         default: false
       baseband:
@@ -60,29 +60,20 @@ jobs:
     name: ${{ matrix.variant }} / ${{ matrix.distro }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        if: inputs.userspace_only == false
-        with:
-          repository: MT6895-Mainline/linux
-          ref: ${{ matrix.kernel }}
-          path: linux
       - name: Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends mmdebstrap arch-test debian-archive-keyring \
             qemu-user-static binfmt-support libarchive-tools gnupg \
             e2fsprogs android-sdk-libsparse-utils pigz zstd kmod rsync \
-            build-essential bc flex bison python3 multipath-tools \
-            clang lld llvm binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu cpio lz4 libssl-dev libelf-dev \
-            libncurses-dev dwarves git curl ca-certificates xz-utils
+            build-essential python3 multipath-tools openssl \
+            git curl ca-certificates xz-utils
           sudo update-binfmts --enable qemu-aarch64
           sudo arch-test arm64
-          sudo git config --system --add safe.directory "$PWD/linux"
       - name: Build
         env:
           DEVICE: ${{ matrix.device }}
           DISTRO: ${{ matrix.distro }}
-          KERNEL: ${{ matrix.kernel }}
           SUFFIX: ${{ matrix.suffix }}
           UI: ${{ inputs.ui }}
           USERSPACE_ONLY: ${{ inputs.userspace_only }}
@@ -93,9 +84,7 @@ jobs:
           args=(--device "$DEVICE" --distro "$DISTRO" --ui "$UI" --baseband "$BASEBAND"
                 --ts "$TS" --out "$PWD/out" --jobs 2 --tar)
           if [ "$USERSPACE_ONLY" = true ]; then
-            args+=(--rootfs-only)
-          else
-            args+=(--kernel-repo "$PWD/linux" --kernel-ref "$KERNEL")
+            args+=(--no-image)
           fi
           [ -z "$SUFFIX" ] || args+=(--name-suffix "$SUFFIX")
           sudo -E bash ./build.sh "${args[@]}"
@@ -129,7 +118,8 @@ jobs:
           draft: true
           files: release/*
           body: |
-            Matching Image, DTB, rootfs and kernel modules.
+            ARM64 userspace rootfs only. Supply a separately validated device boot.
+            No kernel, DTB, initramfs or kernel modules are built by this workflow.
             No extracted vendor firmware or modem NVRAM is injected.
             Default local user PIN: 1234. Root and SSH password login are disabled.
             Build success is not device boot/IMS/VCP hardware validation.

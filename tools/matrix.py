@@ -4,11 +4,11 @@ import json
 import sys
 
 DEVICES = {
-    "qqcandy": ("qqcandy", "6.18-mt6895-oplus-qqcandy", ""),
-    "pearl": ("pearl", "7.2-mt6895-xiaomi-pearl", ""),
-    "xaga": ("xaga", "7.2-mt6895-xiaomi-xaga", ""),
-    "xaga-6.18": ("xaga", "6.18-mt6895-xiaomi-xaga", "-6.18"),
-    "rubens": ("rubens", "port/rubens-clean", ""),
+    "qqcandy": ("qqcandy", ""),
+    "pearl": ("pearl", ""),
+    "xaga": ("xaga", ""),
+    "xaga-6.18": ("xaga", "-6.18"),
+    "rubens": ("rubens", ""),
 }
 DISTROS = {"debian", "mobian", "arch", "nura"}
 
@@ -23,7 +23,7 @@ def matrix(devices, distros):
         raise ValueError("Unknown device/distribution")
     return {"include": [
         {"variant": variant, "device": DEVICES[variant][0],
-         "kernel": DEVICES[variant][1], "suffix": DEVICES[variant][2], "distro": distro}
+         "suffix": DEVICES[variant][1], "distro": distro}
         for variant in devices for distro in distros
     ]}
 

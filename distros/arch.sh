@@ -39,7 +39,7 @@ distro_configure() {
 	local root="$1"
 	distro_chroot "$root" pacman-key --init
 	distro_chroot "$root" pacman-key --populate archlinuxarm
-	# Use our matched kernel, not a generic kernel's host-autodetected initramfs.
+	# Boot is external; do not ship a generic kernel's autodetected initramfs.
 	distro_chroot "$root" pacman -R --noconfirm linux-aarch64
 	distro_install_packages "$root" "networkmanager bluez bluez-utils modemmanager \
 		iio-sensor-proxy alsa-ucm-conf alsa-utils openssh sudo kmod e2fsprogs \

@@ -2,8 +2,30 @@
 # MT6895-Mainline first boot:
 #   - grow the root filesystem to fill the partition it was flashed into
 #     (the .img is intentionally smaller than the userdata partition)
-#   - generate a fresh machine-id (images are built with an empty one)
+#   - generate a fresh machine-id using the installation's init stack
 set -e
+
+# D-Bus --ensure accepts a missing ID, but rejects an existing empty file.
+if [ ! -s /etc/machine-id ]; then
+	if command -v systemd-machine-id-setup >/dev/null 2>&1; then
+		systemd-machine-id-setup
+	elif command -v dbus-uuidgen >/dev/null 2>&1; then
+		ID_TMP="$(mktemp /etc/.machine-id.XXXXXX)"
+		trap 'rm -f "$ID_TMP"' 0
+		trap 'exit 1' 1 2 15
+		dbus-uuidgen > "$ID_TMP"
+		dbus-uuidgen --get="$ID_TMP" >/dev/null
+		chmod 0644 "$ID_TMP"
+		mv -f "$ID_TMP" /etc/machine-id
+		trap - 0 1 2 15
+	else
+		echo "mt6895-firstboot: no machine-id generator available" >&2
+		exit 1
+	fi
+fi
+
+# Repair an absent identity even when an older firstboot already ran.
+[ ! -e /var/lib/mt6895-firstboot-done ] || exit 0
 
 ROOT="$(findmnt -no SOURCE / 2>/dev/null || true)"
 if [ -n "$ROOT" ] && [ -b "$ROOT" ]; then
@@ -12,10 +34,6 @@ if [ -n "$ROOT" ] && [ -b "$ROOT" ]; then
 	else
 		echo "mt6895-firstboot: resize2fs on $ROOT not needed or failed"
 	fi
-fi
-
-if [ ! -s /etc/machine-id ] && command -v systemd-machine-id-setup >/dev/null 2>&1; then
-	systemd-machine-id-setup || true
 fi
 
 # regenerate the ssh host keys of this particular installation

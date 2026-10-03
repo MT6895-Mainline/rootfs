@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# MT6895-Mainline rootfs builder (rootfs branch)
+# MT6895-Mainline userspace rootfs builder
 #
-# Builds a flashable rootfs image for an MT6895 device:
-#   - kernel modules built from the matching linux branch, so vermagic matches
+# Builds a userspace rootfs image for an MT6895 device:
+#   - optional import of externally built matching ARM64 kernel modules
 #   - Debian/Mobian, Arch Linux ARM or Nura userspace (ARM64 via QEMU)
 #   - per-device + common overlay applied
 #   - optional bring-your-own firmware blobs
@@ -13,14 +13,14 @@
 #   rootfs-<device>-<distro>-<timestamp>-sparse.img[.gz] and SHA256SUMS
 #
 # Usage:
-#   sudo ./build.sh --device pearl --kernel-repo ./linux
-#   sudo ./build.sh --device pearl --kernel-repo ./linux --firmware ./firmware \
+#   sudo ./build.sh --device pearl
+#   sudo ./build.sh --device pearl --firmware ./firmware \
 #                   --hostname pearl --wifi-ssid MyNet --wifi-password secret
-#   sudo ./build.sh --device pearl --kernel-repo ./linux \
-#                   --kernel-config /path/to/the/kernel/.config
-#   sudo ./build.sh --device pearl --kernel-repo ./linux --kernel-localversion "+"
-#   sudo ./build.sh --device qqcandy --distro nura --kernel-repo ./linux
-#   sudo ./build.sh --device qqcandy --distro arch --rootfs-only --tar
+#   sudo ./build.sh --device qqcandy --distro nura
+#   sudo ./build.sh --device qqcandy --distro arch --no-image --tar
+#   sudo ./build.sh --device qqcandy --modules /path/lib/modules/6.18.0+ \
+#                   --kernel-release 6.18.0+
+# No kernel, DTB, initramfs or boot image is built. Boot is supplied separately.
 #
 set -euo pipefail
 
@@ -32,14 +32,8 @@ SUITE=""
 ARCH="arm64"
 MIRROR=""
 OUT="$HERE/out"
-KERNEL_REPO="${KERNEL_REPO:-}"
-KERNEL_REF=""
-# Optional full .config.  Use this when the boot image you flash was built from
-# a config that is not exactly `defconfig + <device>.config`: the modules have to
-# agree with that config or they will refuse to load.
-KERNEL_CONFIG_FILE="${KERNEL_CONFIG_FILE:-}"
-INITRAMFS_REPO_OVERRIDE=""
-INITRAMFS_COMMIT_OVERRIDE=""
+MODULES_DIR=""
+KVER=none
 FIRMWARE_DIR=""
 JOBS="$(nproc)"
 TS="$(date -u +%Y%m%d-%H%M%S)"
@@ -54,22 +48,15 @@ HOSTNAME_OVERRIDE=""
 ROOT_PASSWORD="${ROOT_PASSWORD:-}"
 USER_PASSWORD="${USER_PASSWORD:-1234}"
 UI=phosh
-ROOTFS_ONLY=0
 VAAPI=auto
 BASEBAND=auto
 BASEBAND_OWNER_REF=latest
 BASEBAND_MM_REF=latest
 WIFI_SSID=""
 WIFI_PASSWORD=""
-# Kernel make arguments, e.g. "LLVM=1" for clang builds (profile sets it).
-KERNEL_MAKE_ARGS="${KERNEL_MAKE_ARGS:-}"
-# Local version suffix the flashed kernel carries (profile sets it, e.g. "+").
-KERNEL_LOCALVERSION_ARG=""
-KERNEL_LOCALVERSION_SET=0
 
 die() { echo "error: $*" >&2; exit 1; }
 log() { printf '\n=== %s ===\n' "$*"; }
-kernel_git() { git -c safe.directory="$KERNEL_REPO" -C "$KERNEL_REPO" "$@"; }
 
 # CI logs are not reachable without a token, but workflow annotations are, so
 # make the failing line announce itself instead of leaving only an exit code.
@@ -89,7 +76,7 @@ while [ $# -gt 0 ]; do
 		--distro) DISTRO="${2:?}"; shift 2 ;;
 		--suite) SUITE="${2:?}"; shift 2 ;;
 		--ui) UI="${2:?}"; shift 2 ;;
-		--rootfs-only) ROOTFS_ONLY=1; MAKE_IMAGE=0; shift ;;
+		--rootfs-only) MAKE_IMAGE=0; MAKE_TAR=1; shift ;;
 		--vaapi) VAAPI="${2:?}"; shift 2 ;;
 		--baseband) BASEBAND="${2:?}"; shift 2 ;;
 		--baseband-owner-ref) BASEBAND_OWNER_REF="${2:?}"; shift 2 ;;
@@ -97,13 +84,9 @@ while [ $# -gt 0 ]; do
 		--mirror) MIRROR="${2:?}"; shift 2 ;;
 		--out) OUT="${2:?}"; shift 2 ;;
 		--ts) TS="${2:?}"; shift 2 ;;
-		--kernel-repo) KERNEL_REPO="${2:?}"; shift 2 ;;
-		--kernel-ref) KERNEL_REF="${2:?}"; shift 2 ;;
-		--kernel-config) KERNEL_CONFIG_FILE="${2:?}"; shift 2 ;;
-		--initramfs-repo) INITRAMFS_REPO_OVERRIDE="${2:?}"; shift 2 ;;
-		--initramfs-ref) INITRAMFS_COMMIT_OVERRIDE="${2:?}"; shift 2 ;;
-		--kernel-localversion) KERNEL_LOCALVERSION_ARG="${2:-}"; KERNEL_LOCALVERSION_SET=1; shift 2 ;;
-		--kernel-make-args) KERNEL_MAKE_ARGS="${2:?}"; shift 2 ;;
+		--modules) MODULES_DIR="${2:?}"; shift 2 ;;
+		--kernel-release) KVER="${2:?}"; shift 2 ;;
+		--kernel-*|--initramfs-*) die "$1 was removed: build boot separately; import --modules with --kernel-release" ;;
 		--firmware) FIRMWARE_DIR="${2:?}"; shift 2 ;;
 		--jobs) JOBS="${2:?}"; shift 2 ;;
 		--img-size) IMG_SIZE="${2:?}"; shift 2 ;;
@@ -142,207 +125,49 @@ done
 
 # shellcheck source=/dev/null
 . "$HERE/devices/$DEVICE.conf"
-INITRAMFS_REPO="${INITRAMFS_REPO_OVERRIDE:-${INITRAMFS_REPO:-}}"
-INITRAMFS_COMMIT="${INITRAMFS_COMMIT_OVERRIDE:-${INITRAMFS_COMMIT:-}}"
-[ -z "$INITRAMFS_COMMIT" ] || [[ "$INITRAMFS_COMMIT" =~ ^[0-9a-f]{40}$ ]] || die 'initramfs ref must be a full commit ID'
-[ -z "$INITRAMFS_REPO_OVERRIDE$INITRAMFS_COMMIT_OVERRIDE" ] || [ "$DEVICE" = qqcandy ] || die 'initramfs overrides require qqcandy'
 [ "$BASEBAND" != on ] || [ -n "${BASEBAND_OWNER_REPO:-}" ] || die 'profile has no baseband support'
 BASEBAND_INSTALLED=0
 
-: "${KERNEL_BRANCH:?profile must set KERNEL_BRANCH}"
-: "${KERNEL_CONFIGS:?profile must set KERNEL_CONFIGS}"
 : "${ROOTFS_LABEL:?profile must set ROOTFS_LABEL}"
-KERNEL_REF="${KERNEL_REF:-$KERNEL_BRANCH}"
 DISTRO_NAME="$(basename "$DISTRO")"
 HOSTNAME_OVERRIDE="${HOSTNAME_OVERRIDE:-$DEVICE}"
-# A profile may pin the exact config the device's boot image was built from
-# (KERNEL_FULL_CONFIG="configs/<file>.config").  --kernel-config still wins.
-if [ -z "$KERNEL_CONFIG_FILE" ] && [ -n "${KERNEL_FULL_CONFIG:-}" ]; then
-	case "$KERNEL_FULL_CONFIG" in
-		/*) KERNEL_CONFIG_FILE="$KERNEL_FULL_CONFIG" ;;
-		*)  KERNEL_CONFIG_FILE="$HERE/$KERNEL_FULL_CONFIG" ;;
-	esac
-	echo "profile pins the kernel config: $KERNEL_CONFIG_FILE"
-fi
-# The profile sets the suffix the flashed kernel reports in `uname -r`;
-# --kernel-localversion overrides it (also used to clear it).
-KERNEL_LOCALVERSION="${KERNEL_LOCALVERSION_ARG:-${KERNEL_LOCALVERSION:-}}"
-[ "$KERNEL_LOCALVERSION_SET" = 0 ] || KERNEL_LOCALVERSION="$KERNEL_LOCALVERSION_ARG"
 
 [ "$(id -u)" = "0" ] || die "must run as root"
-if [ "$ROOTFS_ONLY" = 0 ]; then
-	[ -n "$KERNEL_REPO" ] || die "--kernel-repo (or \$KERNEL_REPO) is required"
-	KERNEL_REPO="$(realpath "$KERNEL_REPO")"
-	kernel_git rev-parse --is-inside-work-tree >/dev/null ||
-		die "kernel repo '$KERNEL_REPO' is not a git checkout"
-	KERNEL_REPO="$(realpath "$KERNEL_REPO")"
+if [ -n "$MODULES_DIR" ]; then
+	[ "$KVER" != none ] || die '--modules requires --kernel-release'
+	MODULES_DIR="$(realpath -e "$MODULES_DIR")"
+	python3 "$HERE/tools/import-modules.py" --source "$MODULES_DIR" --release "$KVER" --check-only
+else
+	[ "$KVER" = none ] || die '--kernel-release requires --modules'
 fi
 
 # Distro backends declare their host tools and own the bootstrap/configure
-# contract. This keeps the kernel/module/image path shared across distros.
+# contract. The userspace image path is shared across distros.
 . "$HERE/distros/$DISTRO.sh"
 SUITE="${SUITE:-$DISTRO_DEFAULT_SUITE}"
 [[ "$SUITE" =~ ^[a-z0-9.-]+$ && "$HOSTNAME_OVERRIDE" =~ ^[a-zA-Z0-9.-]+$ ]] ||
 	die "invalid suite or hostname"
 [[ "$DEFAULT_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || die "invalid default user"
 : "${DISTRO_HOST_TOOLS:?distro backend must set DISTRO_HOST_TOOLS}"
-for tool in mkfs.ext4 zstd du findmnt depmod git $DISTRO_HOST_TOOLS; do
+for tool in mkfs.ext4 zstd du findmnt git $DISTRO_HOST_TOOLS; do
 	command -v "$tool" >/dev/null 2>&1 || die "missing host tool: $tool"
 done
-if [ "$ROOTFS_ONLY" = 0 ] && [ -n "$INITRAMFS_REPO" ]; then
-	[ -n "$INITRAMFS_COMMIT" ] || die 'profile must pin initramfs source'
-	for tool in aarch64-linux-gnu-gcc cpio lz4 readelf make; do
-		command -v "$tool" >/dev/null 2>&1 || die "missing initramfs host tool: $tool"
-	done
-fi
 [ -z "$FIRMWARE_DIR" ] || FIRMWARE_DIR="$(realpath -e "$FIRMWARE_DIR")"
 
 mkdir -p "$OUT"
 OUT="$(realpath "$OUT")"
 WORK="$(mktemp -d "$OUT/.work-$DEVICE-$DISTRO_NAME.XXXXXX")"
 ROOTFS="$WORK/rootfs"
-KBOUT="$WORK/kernel"
-INITRAMFS_INFO=none
 # the device name is part of the image name: several devices are built in one
 # run and their artifacts are collected into a single release
 STUB="rootfs-$DEVICE-$DISTRO_NAME$NAME_SUFFIX-$TS"
-[ "$ROOTFS_ONLY" = 0 ] || STUB="userspace-only-$DEVICE-$DISTRO_NAME-$TS"
 BASE="$STUB.img"
 IMGF="$OUT/$BASE"
-mkdir -p "$ROOTFS" "$KBOUT" "$OUT"
+mkdir -p "$ROOTFS" "$OUT"
 # The script runs as root, but later CI steps (build info) write into --out as
 # the invoking user, so hand the directory over when sudo tells us who that is.
 if [ -n "${SUDO_UID:-}" ] && [ -n "${SUDO_GID:-}" ]; then
 	chown "$SUDO_UID:$SUDO_GID" "$OUT" 2>/dev/null || true
-fi
-
-# ---------------------------------------------------------------- kernel modules
-KVER=none
-CONFIG_SOURCE=none
-if [ "$ROOTFS_ONLY" = 0 ]; then
-log "0. kernel '$KERNEL_REF' from $KERNEL_REPO"
-KERNEL_COMMIT="$(kernel_git rev-parse "$KERNEL_REF^{commit}")"
-KVER_MAKEFILE="$(kernel_git show "$KERNEL_REF:Makefile" 2>/dev/null \
-	| awk -F' = ' '/^(VERSION|PATCHLEVEL|SUBLEVEL) =/{printf "%s%s", sep, $2; sep="."}')"
-[ -n "$KVER_MAKEFILE" ] || die "cannot determine kernel version for $KERNEL_REF"
-echo "kernel version in the Makefile: $KVER_MAKEFILE"
-
-kernel_git archive --format=tar "$KERNEL_REF" | tar -x -C "$KBOUT"
-cd "$KBOUT"
-
-log "1. kernel config"
-export ARCH
-echo "kernel make args: ${KERNEL_MAKE_ARGS:-<none>}"
-# A full config wins: whoever supplies it knows the exact config the boot image
-# was built with, which is the only thing that guarantees the modules load.
-CONFIG_SOURCE=""
-if [ -n "$KERNEL_CONFIG_FILE" ]; then
-	[ -f "$KERNEL_CONFIG_FILE" ] || die "--kernel-config '$KERNEL_CONFIG_FILE' is not a file"
-	cp "$KERNEL_CONFIG_FILE" .config
-	CONFIG_SOURCE="$(cd "$(dirname "$KERNEL_CONFIG_FILE")" && pwd)/$(basename "$KERNEL_CONFIG_FILE")"
-	echo "using the supplied .config: $CONFIG_SOURCE"
-else
-	frags="arch/arm64/configs/defconfig"
-	for cfg in $KERNEL_CONFIGS; do
-		[ -f "arch/arm64/configs/$cfg" ] || die "missing arch/arm64/configs/$cfg"
-		frags="$frags arch/arm64/configs/$cfg"
-	done
-	for cfg in ${KERNEL_EXTRA_CONFIGS:-}; do
-		[ -f "$HERE/$cfg" ] || die "missing rootfs kernel fragment $cfg"
-		frags="$frags $HERE/$cfg"
-	done
-	# The branches' own defconfig enables MediaTek AFE drivers for other SoCs
-	# that do not compile there; the fixups switch them off (they are useless on
-	# MT6895).  A pinned full config already has them off and skips this.
-	if [ -f "$HERE/configs/mt6895-fixups.config" ]; then
-		frags="$frags $HERE/configs/mt6895-fixups.config"
-	fi
-	CONFIG_SOURCE="defconfig + $KERNEL_CONFIGS + ${KERNEL_EXTRA_CONFIGS:-} + fixups"
-	echo "merging: $CONFIG_SOURCE"
-	# The device fragments document this exact procedure in their own header:
-	#   scripts/kconfig/merge_config.sh arch/arm64/configs/defconfig <device>.config
-	# Start from a clean slate so the result does not depend on a stale .config
-	# in the checkout.
-	rm -f .config
-	# shellcheck disable=SC2086
-	scripts/kconfig/merge_config.sh -m $frags
-fi
-# shellcheck disable=SC2086
-make -s $KERNEL_MAKE_ARGS olddefconfig
-if [ -n "$INITRAMFS_REPO" ]; then
-	log "1b. prepare pinned embedded initramfs"
-	bash "$HERE/tools/prepare-initramfs.sh" "$INITRAMFS_REPO" "$INITRAMFS_COMMIT" \
-		"$DEVICE" "$WORK/initramfs" "$FIRMWARE_DIR"
-	scripts/config --enable BLK_DEV_INITRD \
-		--set-str INITRAMFS_SOURCE "$WORK/initramfs/initramfs-$DEVICE.cpio"
-	# shellcheck disable=SC2086
-	make -s $KERNEL_MAKE_ARGS olddefconfig
-	grep -q '^CONFIG_INITRAMFS_SOURCE=".*initramfs-qqcandy.cpio"$' .config || die 'embedded initramfs source missing'
-	INITRAMFS_INFO="$INITRAMFS_COMMIT (embedded /init and /xinit)"
-	CONFIG_SOURCE="$CONFIG_SOURCE + embedded initramfs $INITRAMFS_COMMIT"
-fi
-if [ "$KERNEL_LOCALVERSION_SET" = 1 ]; then
-	scripts/config --set-str LOCALVERSION "$KERNEL_LOCALVERSION"
-	# shellcheck disable=SC2086
-	make -s $KERNEL_MAKE_ARGS olddefconfig
-fi
-if ! grep -q '^CONFIG_EXTRA_FIRMWARE=""' .config && grep -q '^CONFIG_EXTRA_FIRMWARE=' .config; then
-	[ -n "$FIRMWARE_DIR" ] || die "kernel embeds firmware; supply --firmware or a source-only --kernel-config"
-	scripts/config --set-str EXTRA_FIRMWARE_DIR "$(realpath "$FIRMWARE_DIR")"
-	make -s $KERNEL_MAKE_ARGS olddefconfig
-fi
-grep -E '^CONFIG_(LOCALVERSION|MODVERSIONS|MODULE_SIG|BLK_DEV_INITRD|INITRAMFS_FORCE)=' .config || true
-
-# `uname -r` on a device that was built from a git tree is usually not the bare
-# Makefile version (a tree that is not at a tag gets a trailing "+"), and the
-# module directory has to match it exactly or nothing loads.  Ask the tree
-# itself, and force CONFIG_LOCALVERSION if the profile says the flashed kernel
-# carries a suffix this checkout would not produce.
-# `include/config/kernel.release` is cached, so sync before trusting it.
-kernel_release() {
-	# shellcheck disable=SC2086
-	make -s $KERNEL_MAKE_ARGS syncconfig >/dev/null
-	# shellcheck disable=SC2086
-	make -s $KERNEL_MAKE_ARGS kernelrelease 2>/dev/null | tail -1
-}
-KVER="$(kernel_release)"
-[ -n "$KVER" ] || KVER="$KVER_MAKEFILE"
-if [ -n "${KERNEL_LOCALVERSION:-}" ]; then
-	case "$KVER" in
-		*"$KERNEL_LOCALVERSION")
-			echo "kernel release already carries '$KERNEL_LOCALVERSION': $KVER" ;;
-		*)
-			echo "pinning CONFIG_LOCALVERSION=\"$KERNEL_LOCALVERSION\" to match the flashed kernel"
-			# merge rather than append: .config may already carry the symbol, and
-			# merge_config replaces the old value instead of duplicating it
-			lvfrag="$(mktemp)"
-			printf 'CONFIG_LOCALVERSION="%s"\n' "$KERNEL_LOCALVERSION" > "$lvfrag"
-			scripts/kconfig/merge_config.sh -m .config "$lvfrag" >/dev/null 2>&1 || \
-				printf 'CONFIG_LOCALVERSION="%s"\n' "$KERNEL_LOCALVERSION" >> .config
-			rm -f "$lvfrag"
-			# shellcheck disable=SC2086
-			make -s $KERNEL_MAKE_ARGS olddefconfig
-			KVER="$(kernel_release)"
-			;;
-	esac
-fi
-echo "kernel release (module directory): $KVER"
-
-log "2. build the kernel image"
-# `make modules` on its own cannot work in a fresh tree: modpost has no
-# vmlinux.symvers yet and reports every core symbol as undefined.  Building
-# vmlinux first produces it (and gives us the Image the modules belong to,
-# which is worth shipping next to them).
-# shellcheck disable=SC2086
-make -j"$JOBS" $KERNEL_MAKE_ARGS Image
-KIMAGE="$KBOUT/arch/arm64/boot/Image"
-[ -s "$KIMAGE" ] || die "kernel Image missing"
-# shellcheck disable=SC2086
-make -j"$JOBS" $KERNEL_MAKE_ARGS "mediatek/${DTS%.dts}.dtb"
-
-log "2b. build modules"
-# shellcheck disable=SC2086
-make -j"$JOBS" $KERNEL_MAKE_ARGS modules
 fi
 
 # ---------------------------------------------------------------- userspace
@@ -350,31 +175,9 @@ log "3. bootstrap $DISTRO_NAME/$SUITE ($ARCH)"
 distro_bootstrap "$ROOTFS" "$SUITE" "$ARCH" "$MIRROR" "$JOBS"
 distro_configure "$ROOTFS" "$SUITE"
 
-log "4. install kernel modules"
-if [ "$ROOTFS_ONLY" = 0 ]; then
-# With LLVM=1 the kernel strips modules with llvm-strip; if the tool is absent,
-# ship them unstripped rather than failing after a long build.
-MOD_STRIP=1
-case " $KERNEL_MAKE_ARGS " in
-	*" LLVM="*)
-		if ! command -v llvm-strip >/dev/null 2>&1; then
-			echo "warning: llvm-strip not found; installing modules unstripped"
-			MOD_STRIP=""
-		fi ;;
-esac
-# shellcheck disable=SC2086
-make $KERNEL_MAKE_ARGS INSTALL_MOD_PATH="$ROOTFS" ${MOD_STRIP:+INSTALL_MOD_STRIP=1} modules_install
-# The directory modules_install actually used is the truth: if it differs from
-# what we expected, the image would boot without modules, so say so loudly.
-INSTALLED_MODULE_DIR="$(ls "$ROOTFS/lib/modules" 2>/dev/null | head -1)"
-if [ -n "$INSTALLED_MODULE_DIR" ] && [ "$INSTALLED_MODULE_DIR" != "$KVER" ]; then
-	die "modules directory $INSTALLED_MODULE_DIR != kernel release $KVER"
-elif [ -z "$INSTALLED_MODULE_DIR" ]; then
-	die "no modules were installed into the rootfs"
-fi
-echo "modules installed for kernel release: $KVER"
-rm -f "$ROOTFS/lib/modules/$KVER/build" "$ROOTFS/lib/modules/$KVER/source"
-depmod -b "$ROOTFS" "$KVER"
+if [ -n "$MODULES_DIR" ]; then
+	log '4. import externally built kernel modules (no compilation)'
+	python3 "$HERE/tools/import-modules.py" --source "$MODULES_DIR" --release "$KVER" --root "$ROOTFS"
 fi
 
 # ---------------------------------------------------------------- optional userspace components
@@ -511,13 +314,13 @@ log "8b. validate image contracts"
 checks=("$ROOTFS" --device "$DEVICE" --user "$DEFAULT_USER" --init "$INIT_SYSTEM"
 	--ui "$UI" --kernel "$KVER" --ssh-unit "${SSH_UNIT:-ssh.service}"
 	--phosh-unit "${PHOSH_UNIT:-greetd.service}")
+if [ "$UI" = phosh ]; then
+	distro_chroot "$ROOTFS" glib-compile-schemas --strict /usr/share/glib-2.0/schemas
+	distro_chroot "$ROOTFS" gsettings list-schemas > "$WORK/glib-schemas.txt"
+	checks+=(--gsettings-schemas "$WORK/glib-schemas.txt")
+fi
 [ -z "$ROOT_PASSWORD" ] || checks+=(--allow-root-password)
 [ "$BASEBAND_INSTALLED" = 0 ] || checks+=(--baseband)
-if [ "$ROOTFS_ONLY" = 0 ] && [ -z "$KERNEL_CONFIG_FILE" ]; then
-	for module in ${KERNEL_REQUIRED_MODULES:-}; do
-		checks+=(--required-module "$module")
-	done
-fi
 if [ "$VAAPI" != off ] && [ -n "${VAAPI_REPO:-}" ]; then
 	checks+=(--vaapi)
 fi
@@ -560,36 +363,19 @@ if [ "$MAKE_IMAGE" = "1" ]; then
 	fi
 fi
 
-# What the kernel has to report for these modules to be found: if `uname -r` on
-# the device differs from this, the modules will not load.
-cat > "$OUT/KERNEL-INFO-$DEVICE$NAME_SUFFIX-$DISTRO_NAME.txt" <<EOF
+cat > "$OUT/USERSPACE-INFO-$DEVICE$NAME_SUFFIX-$DISTRO_NAME.txt" <<EOF
 device:          $DEVICE
 distribution:    $DISTRO_NAME/$SUITE
-kernel commit:   ${KERNEL_COMMIT:-none (userspace-only, not deployable)}
-kernel branch:   $KERNEL_REF
-kernel release:  $KVER
-modules live in: /lib/modules/$KVER
-kernel config:   $CONFIG_SOURCE
-make args:       ${KERNEL_MAKE_ARGS:-<none>}
-initramfs:       $INITRAMFS_INFO
-local version:   ${KERNEL_LOCALVERSION:-<none>}
+boot artifacts:  external (not built by this repository)
+module release:  $KVER
+module manifest: /usr/share/mt6895-build/kernel-modules.json (when imported)
 
-check on the device:  uname -r     # must print $KVER
+Imported modules require the exact matching external boot/configuration.
+Release/vermagic checks are not hardware or symbol-version validation.
 EOF
-cat "$OUT/KERNEL-INFO-$DEVICE$NAME_SUFFIX-$DISTRO_NAME.txt"
-
-# Ship the kernel these modules were built against, so the pair cannot be mixed
-# up.  The DTB may be embedded in the Image (the pearl branch does that).
-if [ -f "$KBOUT/arch/arm64/boot/Image" ]; then
-	cp "$KBOUT/arch/arm64/boot/Image" "$OUT/Image-$DEVICE$NAME_SUFFIX-$DISTRO_NAME"
-fi
-if [ "$INITRAMFS_INFO" != none ]; then
-	cp "$WORK/initramfs/initramfs-$DEVICE.cpio" "$OUT/initramfs-$DEVICE$NAME_SUFFIX-$DISTRO_NAME.cpio"
-	cp "$WORK/initramfs/manifest.json" "$OUT/initramfs-$DEVICE$NAME_SUFFIX-$DISTRO_NAME.json"
-fi
-DTB="${DTS%.dts}.dtb"
-if [ -f "$KBOUT/arch/arm64/boot/dts/mediatek/$DTB" ]; then
-	cp "$KBOUT/arch/arm64/boot/dts/mediatek/$DTB" "$OUT/dtb-$DEVICE$NAME_SUFFIX-$DISTRO_NAME.dtb"
+cat "$OUT/USERSPACE-INFO-$DEVICE$NAME_SUFFIX-$DISTRO_NAME.txt"
+if [ -n "$MODULES_DIR" ]; then
+	cp "$ROOTFS/usr/share/mt6895-build/kernel-modules.json" "$OUT/MODULES-$DEVICE$NAME_SUFFIX-$DISTRO_NAME.json"
 fi
 
 ( cd "$OUT" && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' |
@@ -603,15 +389,13 @@ elif [ "$KEEP_WORK" != "1" ]; then
 fi
 
 log "done"
-[ "$ROOTFS_ONLY" = 0 ] || { echo "userspace-only validation complete; no kernel or flashable image"; exit 0; }
 cat <<EOF
 device    : $DEVICE  ($PLATFORM_NAME)
-kernel    : $KERNEL_REF = $KVER
-config    : $CONFIG_SOURCE
+modules   : $KVER (optional external import)
 rootfs    : $DISTRO_NAME/$SUITE $ARCH
 userdata  : $USERDATA_PART (${NVDATA_PART:+nvdata $NVDATA_PART})
 timestamp : $TS
 
 Deployment erases userdata. Use the device-specific boot/recovery procedure.
-This builder never flashes partitions. Keep Image, DTB and modules as a pair.
+This builder never flashes partitions or builds boot. Supply a validated external boot.
 EOF

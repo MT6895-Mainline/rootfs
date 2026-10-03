@@ -10,7 +10,7 @@ executing a changing upstream HEAD at every boot. Full commit IDs reproduce a
 known source pair:
 
 ```sh
-sudo bash build.sh --device qqcandy --distro mobian --kernel-repo ../linux \
+sudo bash build.sh --device qqcandy --distro mobian \
   --baseband on \
   --baseband-owner-ref f6147b10cf7ef95932674506fbdfb7f3d67a1067 \
   --baseband-mm-ref 7b55aa04ad250dec7bd0d2fb5b458cd3df9d0763
@@ -41,7 +41,7 @@ The owner `f6147b10cf7ef95932674506fbdfb7f3d67a1067` and MM
 build/install tests in separate Mobian, Arch Linux ARM and Nura rootfs copies.
 Each ran the owner's 12 checks (one Meson suite), all 18 suites in this
 generic + mtk-soc MM configuration, and the real version-only entrypoints.
-Rootfs content contracts and repeat installation also passed. The 24 offline
+Rootfs content contracts and repeat installation also passed. The offline
 builder tests include failed-install DNS restoration, previous-selection
 preservation, corrupt-cache rejection and disabled-service checks.
 Offline systemd unit loading was also checked; it exposed and prevented a
