@@ -142,6 +142,24 @@ The first-boot service grows ext4 and generates per-installation SSH keys.
 
 ## Verification
 
+### Current Validation (2026-10-03)
+
+| qqcandy / Phosh | Full build | Build source / evidence |
+| --- | --- | --- |
+| Arch Linux ARM / GDM | Passed: Image, DTB, modules, tar, ext4 and checksums | `01475dc`, [job](https://github.com/MT6895-Mainline/rootfs/actions/runs/37047995064/job/110974148298) |
+| Nura / OpenRC | Passed: Image, DTB, modules, tar, ext4 and checksums | `01475dc`, [job](https://github.com/MT6895-Mainline/rootfs/actions/runs/37047995064/job/110974148374) |
+| Mobian / Phrog | Validation in progress after Greetd alias-check correction | `5318d97`, [run](https://github.com/MT6895-Mainline/rootfs/actions/runs/37083419238) |
+
+Arch/Nura downloaded artifacts also passed independent checksum, rootfs-content
+and read-only ext4 checks. Current script checks pass all 13 offline tests.
+The full profile requires the four production ECCCI modules; successful
+compilation does not mean an MD owner or working IMS has been installed.
+
+qqcandy punch-hole adaptation is not yet included. Phosh's native notch handling
+needs matching gmobile device data; Android's display overlay is not a Linux
+desktop configuration. Exact top-bar height, greeter, rotation and reserved
+application space require separate validation, not a CSS-only height change.
+
 ```sh
 python3 -m unittest discover -s tests -v
 for f in build.sh distros/*.sh tools/*.sh; do bash -n "$f"; done
