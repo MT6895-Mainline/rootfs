@@ -107,11 +107,27 @@ rootfs-<device>-<distro>[-<suffix>]-<timestamp>-sparse.img[.gz]
 rootfs-<device>-<distro>[-<suffix>]-<timestamp>.tar.zst   (--tar)
 Image-<device>-<distro>
 dtb-<device>-<distro>.dtb
+initramfs-qqcandy-<distro>.cpio
+initramfs-qqcandy-<distro>.json
 KERNEL-INFO-<device>-<distro>.txt
 SHA256SUMS
 ```
 
 A fresh source export builds **Image**, the requested board DTB and modules.
+For qqcandy it first builds a pinned initramfs revision, packages identical
+`/init` and `/xinit` entries, and embeds that archive with
+`CONFIG_INITRAMFS_SOURCE`. The kernel forces
+`rdinit=/xinit`; attaching only an external ramdisk is not a validated boot
+route. The init applies the device's verified UFS keep-awake policy before
+persistent IO. The archive and source/hash manifest accompany the matched
+kernel artifacts; this does not itself claim a successful device boot.
+Bootloader arguments remain intact. This ARM64 tree gates `INITRAMFS_FORCE`
+behind command-line forcing, so the builder does not enable that option or
+replace the bootloader command line merely to ignore an external ramdisk.
+Host builds need `gcc-aarch64-linux-gnu`, `cpio` and `lz4` in addition to
+the LLVM kernel toolchain. `--initramfs-repo` and `--initramfs-ref` (full
+commit ID only) allow a local pinned source checkout. Other profiles do not
+inherit this qqcandy boot contract. `--rootfs-only` does not build initramfs.
 The qqcandy audio fragment keeps the MT6895 AFE built-in, matching the built-in
 SCP's semaphore-notifier dependency, and selects its MT6368 codec/machine.
 Its fixups exclude the mainline CMDQ helper that conflicts with mediatek_v2.

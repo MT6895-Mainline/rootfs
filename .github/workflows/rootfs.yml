@@ -73,7 +73,7 @@ jobs:
             qemu-user-static binfmt-support libarchive-tools gnupg \
             e2fsprogs android-sdk-libsparse-utils pigz zstd kmod rsync \
             build-essential bc flex bison python3 multipath-tools \
-            clang lld llvm binutils-aarch64-linux-gnu libssl-dev libelf-dev \
+            clang lld llvm binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu cpio lz4 libssl-dev libelf-dev \
             libncurses-dev dwarves git curl ca-certificates xz-utils
           sudo update-binfmts --enable qemu-aarch64
           sudo arch-test arm64

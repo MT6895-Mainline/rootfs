@@ -38,6 +38,8 @@ KERNEL_REF=""
 # a config that is not exactly `defconfig + <device>.config`: the modules have to
 # agree with that config or they will refuse to load.
 KERNEL_CONFIG_FILE="${KERNEL_CONFIG_FILE:-}"
+INITRAMFS_REPO_OVERRIDE=""
+INITRAMFS_COMMIT_OVERRIDE=""
 FIRMWARE_DIR=""
 JOBS="$(nproc)"
 TS="$(date -u +%Y%m%d-%H%M%S)"
@@ -98,6 +100,8 @@ while [ $# -gt 0 ]; do
 		--kernel-repo) KERNEL_REPO="${2:?}"; shift 2 ;;
 		--kernel-ref) KERNEL_REF="${2:?}"; shift 2 ;;
 		--kernel-config) KERNEL_CONFIG_FILE="${2:?}"; shift 2 ;;
+		--initramfs-repo) INITRAMFS_REPO_OVERRIDE="${2:?}"; shift 2 ;;
+		--initramfs-ref) INITRAMFS_COMMIT_OVERRIDE="${2:?}"; shift 2 ;;
 		--kernel-localversion) KERNEL_LOCALVERSION_ARG="${2:-}"; KERNEL_LOCALVERSION_SET=1; shift 2 ;;
 		--kernel-make-args) KERNEL_MAKE_ARGS="${2:?}"; shift 2 ;;
 		--firmware) FIRMWARE_DIR="${2:?}"; shift 2 ;;
@@ -138,6 +142,10 @@ done
 
 # shellcheck source=/dev/null
 . "$HERE/devices/$DEVICE.conf"
+INITRAMFS_REPO="${INITRAMFS_REPO_OVERRIDE:-${INITRAMFS_REPO:-}}"
+INITRAMFS_COMMIT="${INITRAMFS_COMMIT_OVERRIDE:-${INITRAMFS_COMMIT:-}}"
+[ -z "$INITRAMFS_COMMIT" ] || [[ "$INITRAMFS_COMMIT" =~ ^[0-9a-f]{40}$ ]] || die 'initramfs ref must be a full commit ID'
+[ -z "$INITRAMFS_REPO_OVERRIDE$INITRAMFS_COMMIT_OVERRIDE" ] || [ "$DEVICE" = qqcandy ] || die 'initramfs overrides require qqcandy'
 [ "$BASEBAND" != on ] || [ -n "${BASEBAND_OWNER_REPO:-}" ] || die 'profile has no baseband support'
 BASEBAND_INSTALLED=0
 
@@ -181,12 +189,20 @@ SUITE="${SUITE:-$DISTRO_DEFAULT_SUITE}"
 for tool in mkfs.ext4 zstd du findmnt depmod git $DISTRO_HOST_TOOLS; do
 	command -v "$tool" >/dev/null 2>&1 || die "missing host tool: $tool"
 done
+if [ "$ROOTFS_ONLY" = 0 ] && [ -n "$INITRAMFS_REPO" ]; then
+	[ -n "$INITRAMFS_COMMIT" ] || die 'profile must pin initramfs source'
+	for tool in aarch64-linux-gnu-gcc cpio lz4 readelf make; do
+		command -v "$tool" >/dev/null 2>&1 || die "missing initramfs host tool: $tool"
+	done
+fi
+[ -z "$FIRMWARE_DIR" ] || FIRMWARE_DIR="$(realpath -e "$FIRMWARE_DIR")"
 
 mkdir -p "$OUT"
 OUT="$(realpath "$OUT")"
 WORK="$(mktemp -d "$OUT/.work-$DEVICE-$DISTRO_NAME.XXXXXX")"
 ROOTFS="$WORK/rootfs"
 KBOUT="$WORK/kernel"
+INITRAMFS_INFO=none
 # the device name is part of the image name: several devices are built in one
 # run and their artifacts are collected into a single release
 STUB="rootfs-$DEVICE-$DISTRO_NAME$NAME_SUFFIX-$TS"
@@ -253,6 +269,18 @@ else
 fi
 # shellcheck disable=SC2086
 make -s $KERNEL_MAKE_ARGS olddefconfig
+if [ -n "$INITRAMFS_REPO" ]; then
+	log "1b. prepare pinned embedded initramfs"
+	bash "$HERE/tools/prepare-initramfs.sh" "$INITRAMFS_REPO" "$INITRAMFS_COMMIT" \
+		"$DEVICE" "$WORK/initramfs" "$FIRMWARE_DIR"
+	scripts/config --enable BLK_DEV_INITRD \
+		--set-str INITRAMFS_SOURCE "$WORK/initramfs/initramfs-$DEVICE.cpio"
+	# shellcheck disable=SC2086
+	make -s $KERNEL_MAKE_ARGS olddefconfig
+	grep -q '^CONFIG_INITRAMFS_SOURCE=".*initramfs-qqcandy.cpio"$' .config || die 'embedded initramfs source missing'
+	INITRAMFS_INFO="$INITRAMFS_COMMIT (embedded /init and /xinit)"
+	CONFIG_SOURCE="$CONFIG_SOURCE + embedded initramfs $INITRAMFS_COMMIT"
+fi
 if [ "$KERNEL_LOCALVERSION_SET" = 1 ]; then
 	scripts/config --set-str LOCALVERSION "$KERNEL_LOCALVERSION"
 	# shellcheck disable=SC2086
@@ -543,6 +571,7 @@ kernel release:  $KVER
 modules live in: /lib/modules/$KVER
 kernel config:   $CONFIG_SOURCE
 make args:       ${KERNEL_MAKE_ARGS:-<none>}
+initramfs:       $INITRAMFS_INFO
 local version:   ${KERNEL_LOCALVERSION:-<none>}
 
 check on the device:  uname -r     # must print $KVER
@@ -553,6 +582,10 @@ cat "$OUT/KERNEL-INFO-$DEVICE$NAME_SUFFIX-$DISTRO_NAME.txt"
 # up.  The DTB may be embedded in the Image (the pearl branch does that).
 if [ -f "$KBOUT/arch/arm64/boot/Image" ]; then
 	cp "$KBOUT/arch/arm64/boot/Image" "$OUT/Image-$DEVICE$NAME_SUFFIX-$DISTRO_NAME"
+fi
+if [ "$INITRAMFS_INFO" != none ]; then
+	cp "$WORK/initramfs/initramfs-$DEVICE.cpio" "$OUT/initramfs-$DEVICE$NAME_SUFFIX-$DISTRO_NAME.cpio"
+	cp "$WORK/initramfs/manifest.json" "$OUT/initramfs-$DEVICE$NAME_SUFFIX-$DISTRO_NAME.json"
 fi
 DTB="${DTS%.dts}.dtb"
 if [ -f "$KBOUT/arch/arm64/boot/dts/mediatek/$DTB" ]; then
