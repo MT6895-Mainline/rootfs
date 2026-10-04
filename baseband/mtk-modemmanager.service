@@ -1,6 +1,7 @@
 [Unit]
 Description=MediaTek CCCI ModemManager bundle
 Requires=mtk-ccci-owner.service
+BindsTo=mtk-ccci-owner.service
 After=mtk-ccci-owner.service dbus.service ModemManager.service
 Conflicts=ModemManager.service
 ConditionPathExists=/etc/default/mtk-ccci
@@ -8,9 +9,11 @@ ConditionPathExists=/etc/default/mtk-ccci
 [Service]
 Type=exec
 ExecStartPre=/usr/bin/python3 /usr/libexec/mtk-ccci/wait-ready.py
-ExecStart=/usr/libexec/mtk-ccci/ModemManager
+ExecStart=/usr/bin/python3 /usr/libexec/mtk-ccci/run-limited.py --role modemmanager
 TimeoutStartSec=150
 Restart=no
+TimeoutStopSec=10
+KillMode=mixed
 
 [Install]
 WantedBy=multi-user.target

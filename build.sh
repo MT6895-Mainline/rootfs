@@ -17,6 +17,7 @@
 #   sudo ./build.sh --device pearl --firmware ./firmware \
 #                   --hostname pearl --wifi-ssid MyNet --wifi-password secret
 #   sudo ./build.sh --device qqcandy --distro nura
+#   sudo ./build.sh --device qqcandy --distro nura --baseband-support /private/support
 #   sudo ./build.sh --device qqcandy --distro arch --no-image --tar
 #   sudo ./build.sh --device qqcandy --modules /path/lib/modules/6.18.0+ \
 #                   --kernel-release 6.18.0+
@@ -52,6 +53,8 @@ VAAPI=auto
 BASEBAND=auto
 BASEBAND_OWNER_REF=latest
 BASEBAND_MM_REF=latest
+BASEBAND_SUPPORT=""
+PHOSH_CUTOUT=auto
 WIFI_SSID=""
 WIFI_PASSWORD=""
 
@@ -81,6 +84,8 @@ while [ $# -gt 0 ]; do
 		--baseband) BASEBAND="${2:?}"; shift 2 ;;
 		--baseband-owner-ref) BASEBAND_OWNER_REF="${2:?}"; shift 2 ;;
 		--baseband-mm-ref) BASEBAND_MM_REF="${2:?}"; shift 2 ;;
+		--baseband-support) BASEBAND_SUPPORT="${2:?}"; shift 2 ;;
+		--phosh-cutout) PHOSH_CUTOUT="${2:?}"; shift 2 ;;
 		--mirror) MIRROR="${2:?}"; shift 2 ;;
 		--out) OUT="${2:?}"; shift 2 ;;
 		--ts) TS="${2:?}"; shift 2 ;;
@@ -116,6 +121,11 @@ done
 case "$UI" in console|phosh) ;; *) die "--ui must be console or phosh" ;; esac
 case "$VAAPI" in auto|on|off) ;; *) die "--vaapi must be auto, on or off" ;; esac
 case "$BASEBAND" in auto|on|off) ;; *) die "--baseband must be auto, on or off" ;; esac
+case "$PHOSH_CUTOUT" in auto|on|off) ;; *) die '--phosh-cutout must be auto, on or off' ;; esac
+if [ "$PHOSH_CUTOUT" = on ]; then
+	[ "$DEVICE" = qqcandy ] && [ "$DISTRO" = nura ] && [ "$UI" = phosh ] ||
+		die 'native cutout support is currently reviewed only for qqcandy/Nura/Phosh'
+fi
 for ref in "$BASEBAND_OWNER_REF" "$BASEBAND_MM_REF"; do
 	[[ "$ref" = latest || "$ref" =~ ^[0-9a-f]{40}$ ]] || die 'baseband refs must be latest or full commit IDs'
 done
@@ -127,12 +137,18 @@ done
 . "$HERE/devices/$DEVICE.conf"
 [ "$BASEBAND" != on ] || [ -n "${BASEBAND_OWNER_REPO:-}" ] || die 'profile has no baseband support'
 BASEBAND_INSTALLED=0
+PHOSH_CUTOUT_INSTALLED=0
 
 : "${ROOTFS_LABEL:?profile must set ROOTFS_LABEL}"
 DISTRO_NAME="$(basename "$DISTRO")"
 HOSTNAME_OVERRIDE="${HOSTNAME_OVERRIDE:-$DEVICE}"
 
 [ "$(id -u)" = "0" ] || die "must run as root"
+if [ -n "$BASEBAND_SUPPORT" ]; then
+	[ "$DEVICE" = qqcandy ] && [ "$BASEBAND" != off ] || die '--baseband-support requires qqcandy baseband installation'
+	BASEBAND_SUPPORT="$(realpath -e "$BASEBAND_SUPPORT")"
+	python3 "$HERE/tools/provision-baseband.py" --source "$BASEBAND_SUPPORT" --check-only
+fi
 if [ -n "$MODULES_DIR" ]; then
 	[ "$KVER" != none ] || die '--modules requires --kernel-release'
 	MODULES_DIR="$(realpath -e "$MODULES_DIR")"
@@ -306,7 +322,16 @@ fi
 
 # ---------------------------------------------------------------- finalise
 log "8. finalise"
+if [ "$PHOSH_CUTOUT" != off ] && [ "$DEVICE" = qqcandy ] && [ "$DISTRO" = nura ] && [ "$UI" = phosh ]; then
+	log '7b. build device-tested native Phosh/Phrog cutout layout'
+	bash "$HERE/tools/install-phosh-cutout.sh" --root "$ROOTFS" --device "$DEVICE" --distro "$DISTRO" --jobs "$JOBS"
+	PHOSH_CUTOUT_INSTALLED=1
+fi
 distro_finalize "$ROOTFS"
+if [ -n "$BASEBAND_SUPPORT" ]; then
+	log '8a. provision private baseband support and guarded automatic startup'
+	python3 "$HERE/tools/provision-baseband.py" --root "$ROOTFS" --distro "$DISTRO" --source "$BASEBAND_SUPPORT"
+fi
 rm -rf "$ROOTFS/var/cache/apt"/* "$ROOTFS/var/lib/apt/lists"/* 2>/dev/null || true
 rm -rf "$ROOTFS/tmp"/* 2>/dev/null || true
 install -d -m 1777 "$ROOTFS/tmp" "$ROOTFS/var/tmp"
@@ -327,6 +352,7 @@ if [ "$UI" = phosh ]; then
 fi
 [ -z "$ROOT_PASSWORD" ] || checks+=(--allow-root-password)
 [ "$BASEBAND_INSTALLED" = 0 ] || checks+=(--baseband)
+[ "$PHOSH_CUTOUT_INSTALLED" = 0 ] || checks+=(--phosh-cutout)
 if [ "$VAAPI" != off ] && [ -n "${VAAPI_REPO:-}" ]; then
 	checks+=(--vaapi)
 fi

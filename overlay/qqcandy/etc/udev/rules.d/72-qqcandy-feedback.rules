@@ -1,0 +1,2 @@
+# qqcandy exposes the verified AW8697 through the input force-feedback API.
+ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT}=="1", SUBSYSTEMS=="input", ATTRS{name}=="aw8697-haptics", TAG+="uaccess", ENV{FEEDBACKD_TYPE}="vibra"

@@ -1,12 +1,17 @@
 #!/sbin/openrc-run
 # shellcheck shell=sh
 description="MediaTek CCCI modem owner"
-command="/usr/libexec/mtk-ccci/start-owner"
+command="/usr/bin/python3"
+command_args="/usr/libexec/mtk-ccci/run-limited.py --role owner"
 command_background=yes
 pidfile="/run/mtk-ccci/owner.pid"
+retry="TERM/40/KILL/5"
+umask=0077
+output_log="/var/lib/mtk-ccci/qqcandy-532/evidence/service-owner.log"
+error_log="/var/lib/mtk-ccci/qqcandy-532/evidence/service-owner-error.log"
 
 depend() {
-	need localmount
+	need mtk-ccci-prepare
 }
 
 start_pre() {
@@ -15,5 +20,11 @@ start_pre() {
 	. /etc/default/mtk-ccci
 	set +a
 	checkpath --directory --mode 0700 /run/mtk-ccci || return 1
-	"$command" --check
+	/usr/libexec/mtk-ccci/start-owner --check
+}
+
+stop_pre() {
+	if rc-service mtk-modemmanager status >/dev/null 2>&1; then
+		rc-service mtk-modemmanager stop || return 1
+	fi
 }

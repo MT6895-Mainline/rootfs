@@ -1,9 +1,14 @@
 #!/sbin/openrc-run
 # shellcheck shell=sh
 description="MediaTek CCCI ModemManager bundle"
-command="/usr/libexec/mtk-ccci/ModemManager"
+command="/usr/bin/python3"
+command_args="/usr/libexec/mtk-ccci/run-limited.py --role modemmanager"
 command_background=yes
 pidfile="/run/mtk-ccci/modemmanager.pid"
+retry="TERM/10/KILL/5"
+umask=0077
+output_log="/var/lib/mtk-ccci/qqcandy-532/evidence/service-mm.log"
+error_log="/var/lib/mtk-ccci/qqcandy-532/evidence/service-mm-error.log"
 
 depend() {
 	need dbus mtk-ccci-owner

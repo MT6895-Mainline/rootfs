@@ -1,0 +1,16 @@
+#!/sbin/openrc-run
+# shellcheck shell=sh
+description="Reviewed MediaTek kernel and read-only NV preparation"
+
+depend() {
+	need localmount dbus
+	before mtk-ccci-owner
+}
+
+start() {
+	ebegin "$description"
+	/usr/bin/python3 /usr/libexec/mtk-ccci/prepare-owner.py --prepare
+	eend $?
+}
+
+# Stop never unmounts NV or unloads an active modem's modules.

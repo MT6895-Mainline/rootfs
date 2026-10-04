@@ -1,0 +1,12 @@
+[Unit]
+Description=Reviewed MediaTek kernel and read-only NV preparation
+After=local-fs.target dbus.service ModemManager.service
+Before=mtk-ccci-owner.service
+Conflicts=ModemManager.service
+ConditionPathExists=/etc/mtk-ccci/boot-profile.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/libexec/mtk-ccci/prepare-owner.py --prepare
+RemainAfterExit=yes
+TimeoutStartSec=300

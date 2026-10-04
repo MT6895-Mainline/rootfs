@@ -90,14 +90,14 @@ esac
             file = bundle / name
             file.parent.mkdir(parents=True, exist_ok=True)
             file.touch()
-        for name in ("ModemManager", "start-owner", "wait-ready.py"):
+        for name in ("ModemManager", "start-owner", "wait-ready.py", "prepare-owner.py", "run-limited.py"):
             file = root / "usr/libexec/mtk-ccci" / name
             file.parent.mkdir(parents=True, exist_ok=True)
             file.touch(mode=0o755)
         rule = root / "etc/udev/rules.d/77-mm-mtk-soc.rules"
         rule.parent.mkdir(parents=True)
         rule.touch()
-        for service in ("mtk-ccci-owner", "mtk-modemmanager"):
+        for service in ("mtk-ccci-prepare", "mtk-ccci-owner", "mtk-modemmanager"):
             unit = (root / "etc/init.d" / service if distro == "nura" else
                     root / "usr/lib/systemd/system" / (service + ".service"))
             unit.parent.mkdir(parents=True, exist_ok=True)

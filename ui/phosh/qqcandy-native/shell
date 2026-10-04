@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+# WORKAROUND until the tested panel/height support is in distribution packages.
+G_RESOURCE_OVERLAYS=/mobi/phosh/gmobile/devices/display-panels=/usr/share/qqcandy-phosh/panels
+export G_RESOURCE_OVERLAYS
+case "$(/usr/libexec/phosh --version)" in
+  'Phosh 0.57.0 - '*) exec /usr/lib/qqcandy-phosh/phosh "$@" ;;
+  *)
+    logger -t qqcandy-phosh 'Distribution Phosh changed; using stock shell until cutout rebuild'
+    exec /usr/libexec/phosh "$@"
+    ;;
+esac

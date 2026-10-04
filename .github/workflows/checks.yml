@@ -10,9 +10,9 @@ jobs:
       - run: python3 -m unittest discover -s tests -v
       - name: Bash syntax
         run: |
-          for f in build.sh distros/*.sh tools/*.sh baseband/ModemManager baseband/start-owner baseband/*.initd; do bash -n "$f"; done
+          for f in build.sh distros/*.sh tools/*.sh baseband/ModemManager baseband/start-owner baseband/*.initd ui/phosh/qqcandy-native/shell ui/phosh/qqcandy-native/greeter; do bash -n "$f"; done
       - name: Shell contracts
         run: |
           shellcheck -x -e SC1090,SC1091,SC2034,SC2154,SC2016,SC2048,SC2086,SC2012,SC2094 \
-            build.sh distros/*.sh tools/with-qemu.sh tools/install-baseband.sh \
-            baseband/ModemManager baseband/start-owner baseband/*.initd
+            build.sh distros/*.sh tools/with-qemu.sh tools/install-baseband.sh tools/install-phosh-cutout.sh \
+            baseband/ModemManager baseband/start-owner baseband/*.initd ui/phosh/qqcandy-native/shell ui/phosh/qqcandy-native/greeter

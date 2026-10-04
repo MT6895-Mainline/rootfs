@@ -1,0 +1,22 @@
+[Unit]
+Description=MediaTek CCCI modem userspace owner
+Requires=mtk-ccci-prepare.service
+After=mtk-ccci-prepare.service
+Before=mtk-modemmanager.service
+ConditionPathExists=/etc/default/mtk-ccci
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/default/mtk-ccci
+ExecStartPre=/usr/libexec/mtk-ccci/start-owner --check
+ExecStart=/usr/bin/python3 /usr/libexec/mtk-ccci/run-limited.py --role owner
+Restart=no
+UMask=0077
+RuntimeDirectory=mtk-ccci
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+TimeoutStopSec=40
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+# Limit the private libphosh to the greeter; never change the system linker path.
+G_RESOURCE_OVERLAYS=/mobi/phosh/gmobile/devices/display-panels=/usr/share/qqcandy-phosh/panels
+export G_RESOURCE_OVERLAYS
+compatible=false
+case "$(/usr/libexec/phosh --version)" in 'Phosh 0.57.0 - '*) compatible=true ;; esac
+if [ "$(/usr/bin/phrog --version)" = 'phrog 0.53.0' ] && [ "$compatible" = true ]; then
+    LD_LIBRARY_PATH=/usr/lib/qqcandy-phosh
+    export LD_LIBRARY_PATH
+else
+    logger -t qqcandy-phosh 'Greeter packages changed; using stock library until cutout rebuild'
+fi
+exec /usr/libexec/phrog-greetd-session "$@"

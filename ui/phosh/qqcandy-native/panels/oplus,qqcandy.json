@@ -1,0 +1,13 @@
+{
+  "name": "OPPO K10 / OnePlus Ace Racing Edition",
+  "x-res": 1080,
+  "y-res": 2412,
+  "width": 68,
+  "height": 153,
+  "cutouts": [
+    {
+      "name": "Android 22801 camera safe area (candidate)",
+      "path": "M 0,0 L 0,118 L 150,118 L 150,0 Z"
+    }
+  ]
+}

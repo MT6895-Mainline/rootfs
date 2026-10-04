@@ -115,14 +115,17 @@ install_integration() {
 	install -m 0755 "$HERE/baseband/ModemManager" "$ROOTFS/usr/libexec/mtk-ccci/ModemManager"
 	install -m 0755 "$HERE/baseband/start-owner" "$ROOTFS/usr/libexec/mtk-ccci/start-owner"
 	install -m 0755 "$HERE/baseband/wait-ready.py" "$ROOTFS/usr/libexec/mtk-ccci/wait-ready.py"
+	install -m 0755 "$HERE/baseband/prepare-owner.py" "$ROOTFS/usr/libexec/mtk-ccci/prepare-owner.py"
+	install -m 0755 "$HERE/baseband/run-limited.py" "$ROOTFS/usr/libexec/mtk-ccci/run-limited.py"
+	install -m 0644 "$HERE/baseband/qqcandy-532.json" "$ROOTFS/usr/libexec/mtk-ccci/qqcandy-532.json"
 	if [ "$INIT_SYSTEM" = systemd ]; then
 		install -d "$ROOTFS/usr/lib/systemd/system"
-		sed 's|^ExecStart=.*|ExecStart=/usr/libexec/mtk-ccci/start-owner|' \
-			"$WORK/owner/systemd/mtk-ccci-owner.service.example" > \
-			"$ROOTFS/usr/lib/systemd/system/mtk-ccci-owner.service"
+		install -m 0644 "$HERE/baseband/mtk-ccci-owner.service" "$ROOTFS/usr/lib/systemd/system/mtk-ccci-owner.service"
+		install -m 0644 "$HERE/baseband/mtk-ccci-prepare.service" "$ROOTFS/usr/lib/systemd/system/mtk-ccci-prepare.service"
 		install -m 0644 "$HERE/baseband/mtk-modemmanager.service" "$ROOTFS/usr/lib/systemd/system/mtk-modemmanager.service"
 	else
 		install -d "$ROOTFS/etc/init.d"
+		install -m 0755 "$HERE/baseband/mtk-ccci-prepare.initd" "$ROOTFS/etc/init.d/mtk-ccci-prepare"
 		install -m 0755 "$HERE/baseband/mtk-ccci-owner.initd" "$ROOTFS/etc/init.d/mtk-ccci-owner"
 		install -m 0755 "$HERE/baseband/mtk-modemmanager.initd" "$ROOTFS/etc/init.d/mtk-modemmanager"
 	fi

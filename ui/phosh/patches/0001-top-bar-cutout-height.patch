@@ -1,0 +1,279 @@
+diff --git a/src/layout-manager.c b/src/layout-manager.c
+index 27693da..a9d52af 100644
+--- a/src/layout-manager.c
++++ b/src/layout-manager.c
+@@ -49,6 +49,7 @@ struct _PhoshLayoutManager {
+   guint                       corner_shift;
+   guint                       network_box_shift;
+   guint                       indicators_box_shift;
++  guint                       top_bar_height;
+ 
+   PhoshMonitor               *builtin;
+ };
+@@ -121,6 +122,7 @@ get_clock_pos (PhoshLayoutManager *self, guint *clock_box_shift)
+ 
+   scale = phosh_monitor_get_fractional_scale (self->builtin);
+   clock_rect = center_clock_rect;
++  clock_rect.height = phosh_layout_manager_get_top_bar_height (self);
+   clock_rect.x = (self->builtin->width / scale / 2.0) - center_clock_rect.width / 2.0;
+   clock_box_rect.width = self->builtin->width / scale;
+   clock_box_rect.height = CLOCK_BOX_HEIGHT;
+@@ -206,6 +208,7 @@ get_cutout_shifts (PhoshLayoutManager *self, guint *network, guint *indicators)
+ 
+   scale = phosh_monitor_get_fractional_scale (self->builtin);
+   width = self->builtin->logical.width;
++  network_box.height = indicators_box.height = phosh_layout_manager_get_top_bar_height (self);
+ 
+   network_box.x = PHOSH_TOP_BAR_MIN_PADDING;
+   indicators_box.x = width - indicators_box.width - PHOSH_TOP_BAR_MIN_PADDING;
+@@ -282,7 +285,9 @@ G_GNUC_END_IGNORE_DEPRECATIONS
+    *    | m    a
+    */
+   /* Icons usually don't fill the full height so assume 80% */
+-  b = c - (PHOSH_TOP_BAR_HEIGHT - 0.8 * PHOSH_TOP_BAR_ICON_PIXEL_SIZE) / 2;
++  b = c - (phosh_layout_manager_get_top_bar_height (self) -
++           0.8 * PHOSH_TOP_BAR_ICON_PIXEL_SIZE) / 2;
++  b = CLAMP (b, 0, c);
+   a = floor (sqrt((c * c) - (b * b)));
+ 
+   shift = MAX (PHOSH_TOP_BAR_MIN_PADDING, ceil (r - a));
+@@ -298,9 +303,10 @@ static void
+ update_layout (PhoshLayoutManager *self)
+ {
+   PhoshLayoutClockPosition pos;
+-  guint corner_shift, clock_box_shift = 0;
++  guint corner_shift, top_bar_height, clock_box_shift = 0;
+   guint network_box_shift = 0, indicators_box_shift = 0;
+ 
++  top_bar_height = phosh_layout_manager_get_top_bar_height (self);
+   corner_shift = get_corner_shift (self);
+   get_cutout_shifts (self, &network_box_shift, &indicators_box_shift);
+   pos = get_clock_pos (self, &clock_box_shift);
+@@ -308,7 +314,8 @@ update_layout (PhoshLayoutManager *self)
+   indicators_box_shift = MAX (indicators_box_shift, corner_shift);
+   network_box_shift = MAX (network_box_shift, corner_shift);
+ 
+-  if (self->corner_shift == corner_shift &&
++  if (self->top_bar_height == top_bar_height &&
++      self->corner_shift == corner_shift &&
+       self->network_box_shift == network_box_shift &&
+       self->indicators_box_shift == indicators_box_shift &&
+       self->clock_pos == pos &&
+@@ -317,6 +324,7 @@ update_layout (PhoshLayoutManager *self)
+   }
+ 
+   self->clock_pos = pos;
++  self->top_bar_height = top_bar_height;
+   self->clock_box_shift = clock_box_shift;
+   self->corner_shift = corner_shift;
+   self->network_box_shift = network_box_shift;
+@@ -423,6 +431,7 @@ phosh_layout_manager_init (PhoshLayoutManager *self)
+   self->network_box_shift = PHOSH_TOP_BAR_MIN_PADDING;
+   self->indicators_box_shift = PHOSH_TOP_BAR_MIN_PADDING;
+   self->corner_shift = PHOSH_TOP_BAR_MIN_PADDING;
++  self->top_bar_height = PHOSH_TOP_BAR_HEIGHT;
+ 
+   self->settings = g_settings_new ("sm.puri.phosh");
+   g_signal_connect_object (self->settings, "changed::" SHELL_LAYOUT_KEY,
+@@ -452,6 +461,45 @@ phosh_layout_manager_new (void)
+   return PHOSH_LAYOUT_MANAGER (g_object_new (PHOSH_TYPE_LAYOUT_MANAGER, NULL));
+ }
+ 
++guint
++phosh_layout_manager_get_top_bar_height (PhoshLayoutManager *self)
++{
++  GListModel *cutouts;
++  float scale;
++  guint height = PHOSH_TOP_BAR_HEIGHT;
++
++  g_return_val_if_fail (PHOSH_IS_LAYOUT_MANAGER (self), height);
++
++  if (self->layout != PHOSH_SHELL_LAYOUT_DEVICE || self->panel == NULL ||
++      self->builtin == NULL || !phosh_monitor_is_configured (self->builtin))
++    return height;
++
++  if (phosh_monitor_get_transform (self->builtin) != PHOSH_MONITOR_TRANSFORM_NORMAL ||
++      phosh_shell_get_primary_monitor (phosh_shell_get_default ()) != self->builtin)
++    return height;
++
++  scale = phosh_monitor_get_fractional_scale (self->builtin);
++  if (!isfinite (scale) || scale <= 0)
++    return height;
++
++  /* Cover top-edge cutouts in logical coordinates; leave other edges unchanged. */
++  cutouts = gm_display_panel_get_cutouts (self->panel);
++  for (guint i = 0; i < g_list_model_get_n_items (cutouts); i++) {
++    g_autoptr (GmCutout) cutout = g_list_model_get_item (cutouts, i);
++    const GmRect *bounds = gm_cutout_get_bounds (cutout);
++    double bottom = ceil ((bounds->y + bounds->height) / scale);
++
++    if (bounds->y < 0 || bounds->y >= PHOSH_TOP_BAR_HEIGHT * scale ||
++        bounds->x + bounds->width <= 0 || bounds->x >= self->builtin->width ||
++        bottom > self->builtin->height / scale / 4.0)
++      continue;
++
++    height = MAX (height, bottom);
++  }
++
++  return height;
++}
++
+ /**
+  * phosh_layout_manager_get_clock_pos:
+  * @self: The layout manager
+diff --git a/src/layout-manager.h b/src/layout-manager.h
+index 36c9a91..e705a88 100644
+--- a/src/layout-manager.h
++++ b/src/layout-manager.h
+@@ -19,6 +19,7 @@ G_BEGIN_DECLS
+ G_DECLARE_FINAL_TYPE (PhoshLayoutManager, phosh_layout_manager, PHOSH, LAYOUT_MANAGER, GObject)
+ 
+ PhoshLayoutManager          *phosh_layout_manager_new (void);
++guint                        phosh_layout_manager_get_top_bar_height   (PhoshLayoutManager *self);
+ PhoshLayoutClockPosition     phosh_layout_manager_get_clock_pos        (PhoshLayoutManager *self);
+ guint                        phosh_layout_manager_get_clock_box_shift  (PhoshLayoutManager *self);
+ void                         phosh_layout_manager_get_box_shifts       (PhoshLayoutManager *self,
+diff --git a/src/shell.c b/src/shell.c
+index 1a664db..8e3962f 100644
+--- a/src/shell.c
++++ b/src/shell.c
+@@ -2324,11 +2324,12 @@ phosh_shell_get_usable_area (PhoshShell *self, int *x, int *y, int *width, int *
+ {
+   PhoshMonitor *monitor;
+   PhoshMonitorMode *mode;
+-  int w, h;
++  int w, h, top_bar_height;
+   float scale;
+ 
+   g_return_if_fail (PHOSH_IS_SHELL (self));
+ 
++  top_bar_height = phosh_layout_manager_get_top_bar_height (phosh_shell_get_layout_manager (self));
+   monitor = phosh_shell_get_primary_monitor (self);
+   g_return_if_fail (monitor);
+   mode = phosh_monitor_get_current_mode (monitor);
+@@ -2349,18 +2350,18 @@ phosh_shell_get_usable_area (PhoshShell *self, int *x, int *y, int *width, int *
+   case PHOSH_MONITOR_TRANSFORM_FLIPPED:
+   case PHOSH_MONITOR_TRANSFORM_FLIPPED_180:
+     w = mode->width / scale;
+-    h = mode->height / scale - PHOSH_TOP_BAR_HEIGHT - PHOSH_HOME_BAR_HEIGHT;
++    h = mode->height / scale - top_bar_height - PHOSH_HOME_BAR_HEIGHT;
+     break;
+   default:
+     w = mode->height / scale;
+-    h = mode->width / scale - PHOSH_TOP_BAR_HEIGHT - PHOSH_HOME_BAR_HEIGHT;
++    h = mode->width / scale - top_bar_height - PHOSH_HOME_BAR_HEIGHT;
+     break;
+   }
+ 
+   if (x)
+     *x = 0;
+   if (y)
+-    *y = PHOSH_TOP_BAR_HEIGHT;
++    *y = top_bar_height;
+   if (width)
+     *width = w;
+   if (height)
+@@ -2386,7 +2387,8 @@ phosh_shell_get_area (PhoshShell *self, int *width, int *height)
+     *width = w;
+ 
+   if (height)
+-    *height = h + PHOSH_TOP_BAR_HEIGHT + PHOSH_HOME_BAR_HEIGHT;
++    *height = h + phosh_layout_manager_get_top_bar_height (phosh_shell_get_layout_manager (self)) +
++      PHOSH_HOME_BAR_HEIGHT;
+ }
+ 
+ static PhoshShell *instance;
+diff --git a/src/top-panel.c b/src/top-panel.c
+index 290e260..64686eb 100644
+--- a/src/top-panel.c
++++ b/src/top-panel.c
+@@ -90,6 +90,7 @@ typedef struct _PhoshTopPanel {
+ 
+   GtkWidget *top_bar_bin;
+   GtkWidget *box_top_bar;
++  guint      top_bar_height;
+   GtkWidget *lbl_clock;      /* top-bar clock */
+   GtkWidget *lbl_lang;
+   PhoshStatusIconsBox *status_icons_box;
+@@ -199,7 +200,7 @@ update_drag_handle (PhoshTopPanel *self, gboolean queue_draw)
+ 
+   /* By default only the bottom bar handle is draggable */
+   handle = phosh_layer_surface_get_configured_height (PHOSH_LAYER_SURFACE (self));
+-  handle -= PHOSH_TOP_BAR_HEIGHT;
++  handle -= self->top_bar_height;
+ 
+   /* Settings might enlarge the draggable area */
+   offset = phosh_settings_get_drag_handle_offset (PHOSH_SETTINGS (self->settings));
+@@ -565,7 +566,7 @@ phosh_top_panel_dragged (PhoshDragSurface *drag_surface, int margin)
+   double progress, transparency;
+ 
+   gtk_window_get_size (GTK_WINDOW (self), &width, &height);
+-  progress = -margin / (double)(height - PHOSH_TOP_BAR_HEIGHT);
++  progress = -margin / (double)MAX (1, height - (int)self->top_bar_height);
+   phosh_arrow_set_progress (PHOSH_ARROW (self->arrow), progress);
+ 
+   progress = MIN (1.0, progress);
+@@ -830,9 +831,9 @@ phosh_top_panel_dispose (GObject *object)
+ 
+ 
+ static int
+-get_margin (gint height)
++get_margin (PhoshTopPanel *self, gint height)
+ {
+-  return (-1 * height) + PHOSH_TOP_BAR_HEIGHT;
++  return (-1 * height) + self->top_bar_height;
+ }
+ 
+ 
+@@ -841,7 +842,7 @@ on_configure_event (PhoshTopPanel *self, GdkEventConfigure *event)
+ {
+   guint margin;
+ 
+-  margin = get_margin (event->height);
++  margin = get_margin (self, event->height);
+ 
+   /* ignore popovers like the power menu */
+   if (gtk_widget_get_window (GTK_WIDGET (self)) != event->window)
+@@ -1075,6 +1076,9 @@ on_layout_changed (PhoshTopPanel *self, PhoshLayoutManager *layout_manager)
+   g_return_if_fail (PHOSH_IS_TOP_PANEL (self));
+   g_return_if_fail (PHOSH_IS_LAYOUT_MANAGER (layout_manager));
+ 
++  self->top_bar_height = phosh_layout_manager_get_top_bar_height (layout_manager);
++  gtk_widget_set_size_request (self->box_top_bar, -1, self->top_bar_height);
++  phosh_drag_surface_set_exclusive (PHOSH_DRAG_SURFACE (self), self->top_bar_height);
+   set_clock_position (self, layout_manager);
+   set_margin (self, layout_manager);
+ }
+@@ -1088,6 +1092,7 @@ phosh_top_panel_init (PhoshTopPanel *self)
+ 
+   gtk_widget_init_template (GTK_WIDGET (self));
+ 
++  self->top_bar_height = PHOSH_TOP_BAR_HEIGHT;
+   self->cancel = g_cancellable_new ();
+   self->state = PHOSH_TOP_PANEL_STATE_UNFOLDED;
+   self->kb_settings = g_settings_new (KEYBINDINGS_SCHEMA_ID);
+@@ -1119,11 +1124,14 @@ phosh_top_panel_new (struct zwlr_layer_shell_v1          *layer_shell,
+                      PhoshMonitor                        *monitor,
+                      guint32                              layer)
+ {
++  PhoshLayoutManager *layout_manager = phosh_shell_get_layout_manager (phosh_shell_get_default ());
++  guint height = phosh_layout_manager_get_top_bar_height (layout_manager);
++
+   return g_object_new (PHOSH_TYPE_TOP_PANEL,
+                        /* layer-surface */
+                        "layer-shell", layer_shell,
+                        "wl-output", monitor->wl_output,
+-                       "height", PHOSH_TOP_BAR_HEIGHT,
++                       "height", height,
+                        "anchor", ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
+                                  ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT |
+                                  ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT,
+@@ -1132,7 +1140,7 @@ phosh_top_panel_new (struct zwlr_layer_shell_v1          *layer_shell,
+                        "namespace", "phosh top-panel",
+                        /* drag-surface */
+                        "layer-shell-effects", layer_shell_effects,
+-                       "exclusive", PHOSH_TOP_BAR_HEIGHT,
++                       "exclusive", height,
+                        "threshold", PHOSH_TOP_PANEL_DRAG_THRESHOLD,
+                        NULL);
+ }

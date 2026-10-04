@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "compatible": "oplus,qqcandy",
+  "kernel": "6.18.0-g5d55376a6791-dirty+",
+  "notes_sha256": "76c3b6b46d0e0726cbba752d69c2ff705359ca1373f815e39749b4296a25b38b",
+  "vermagic": "6.18.0-g5d55376a6791-dirty+ SMP preempt mod_unload aarch64",
+  "modules": {
+    "ccci_auxadc.ko": "81425bcfae899964ff3db94355876fe2c44d7b2ebd849ce712189968cc825b93",
+    "ccci_md_clk.ko": "fcbdbbbec670364d5995cc5409bd7ecd1bd07a48d5363bc96915fe4b291f350f",
+    "ccci_rtc.ko": "8175bb6e76ddb551612f62925b648f122db00043594fe41549d9b583e42ba6ea",
+    "ccci_md_all.ko": "daf3e710c6d054ae440371d0def0bf0d4597647dce1081a150cc7876e8ab7f09",
+    "ccci_fsm_scp.ko": "4a400ae570f7d8e1c2b2dcaa4077f49bf086a49d81fc67ae8d9409264f10d2c6",
+    "ccci_ccif.ko": "f779af39ad08ac90f21c98deaa2add51fdb55307f13f6ed3470d4e11a39f048e",
+    "ccci_dpmaif.v605.ko": "b96b089fea828916dfcfb154ca000eefa4750e7815cb9cbfb41c75f6d3303afb"
+  }
+}

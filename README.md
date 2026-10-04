@@ -111,8 +111,20 @@ disables this integration; `on` requires a reviewed device profile.
 `--baseband-owner-ref` and `--baseband-mm-ref` accept `latest` (the default)
 or full source commits. The manifest records the resolved pair.
 See [baseband installation](docs/baseband.md) for the standalone offline
-installer and layout. Installed services are not automatically enabled until
-board startup is validated. IMS/VoLTE are not claimed working by this builder.
+installer and layout. Without private board support, services remain disabled.
+`--baseband-support /private/support` imports a checked #532 support manifest
+and enables guarded owner/MM startup, including exact kernel/modules, read-only
+NV mounts and a 24-hour owner limit. It never replaces an existing COW store.
+Such images contain private vendor data and device-specific NV seeds: do not
+publish them. The boot chain has run on Nura; a new cold boot and network/IMS
+acceptance are still separate. See [guarded startup](docs/baseband-boot.md).
+
+qqcandy/Nura/Phosh now defaults to the device-tested native cutout integration
+(`--phosh-cutout off` opts out). It rebuilds pinned Phosh 0.57.0 with the Alpine
+patch and a native top-bar patch, then installs a private shell/library for
+the user session and Phrog 0.53.0. Stock APK files remain intact. Other distro
+versions and landscape use are not claimed fully adapted; see
+[display integration](docs/phosh-cutout.md).
 
 ## Userspace Artifacts
 
@@ -198,15 +210,23 @@ change; the user confirmed desktop/keyboard, then Wi-Fi/Bluetooth after another
 boot. This is not baseband/IMS acceptance. Offline builder tests cover identity
 ordering/failure, schema queries, full pinned Nura recommendations and external
 module imports. Separate ARM64 first-boot tests cover nine cases.
-Replacement full three-distribution builds remain a separate acceptance stage;
-historical successful builds above are not a substitute.
+The userspace-only three-distribution matrix passed at `1495876` in
+[run 37124423466](https://github.com/MT6895-Mainline/rootfs/actions/runs/37124423466).
+Those artifacts include the application/schema/interface fixes, not the newer
+native cutout or guarded boot provisioning. The `ef798c3` all-app visibility
+override also passed checks and native ARM64 schema validation.
 
 Auxiliary ap0/wlan1/p2p0 interfaces are unmanaged by default on qqcandy; wlan0
 and USB networking remain managed. Developer tooling can opt those interfaces
-back in. Punch-hole adaptation is not yet included. Phosh's native notch handling
-needs matching gmobile device data; Android's display overlay is not a Linux
-desktop configuration. Exact top-bar height, greeter, rotation and reserved
-application space require separate validation, not a CSS-only height change.
+back in. On the current Nura phone the user has accepted native portrait cutout
+placement in both the desktop and Phrog login page, and keyboard vibration after
+the precise AW8697 feedbackd rule. These fixes now enter the build pipeline;
+this is not evidence that a newly generated whole image was flashed or booted.
+The offline native cutout installer completed compilation, all 36 unit tests,
+ABI comparison and private installation. Guarded owner/MM startup reached READY
+on #532 with all NV mounts read-only. Selecting the present SIM through the
+standard MM interface cleared `sim-missing`; MM now searches but is unregistered.
+Network/IMS and actual cold-boot autostart remain unvalidated.
 
 ```sh
 python3 -m unittest discover -s tests -v
@@ -225,3 +245,7 @@ Arch package downloads under QEMU cannot use Landlock or seccomp filters. The bu
 signatures remain checked, and the deployed
 pacman configuration is unchanged. Remove this workaround once the emulation
 environment supports both mechanisms. See the [pacman manual](https://man.archlinux.org/man/pacman.8.en).
+
+When Waydroid's ARM64 interpreter shadows QEMU, use the existing
+`sudo tools/with-qemu.sh <build-command>` private user/binfmt namespace wrapper.
+Do not disable Waydroid, reset host handlers or call pmbootstrap shutdown.
