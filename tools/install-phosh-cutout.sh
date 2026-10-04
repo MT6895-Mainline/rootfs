@@ -14,9 +14,13 @@ while [ $# -gt 0 ]; do
 		*) die "unknown argument: $1" ;;
 	esac
 done
-[ "$DEVICE" = qqcandy ] && [ "$DISTRO" = nura ] || die 'native cutout integration is reviewed for qqcandy/Nura only'
+if [ "$DEVICE" != qqcandy ] || [ "$DISTRO" != nura ]; then
+	die 'native cutout integration is reviewed for qqcandy/Nura only'
+fi
 [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || die 'invalid jobs'
-[ "$(id -u)" = 0 ] && [ -d "$ROOTFS" ] || die 'root and an offline rootfs required'
+if [ "$(id -u)" != 0 ] || [ ! -d "$ROOTFS" ]; then
+	die 'root and an offline rootfs required'
+fi
 ROOTFS="$(realpath "$ROOTFS")"
 [ "$ROOTFS" != / ] || die 'refusing to rebuild a running desktop'
 for path in usr/src usr/lib/qqcandy-phosh usr/libexec/qqcandy-phosh \
@@ -50,7 +54,9 @@ cleanup() {
 	[ "$DEPS" = 0 ] || distro_chroot "$ROOTFS" apk del .qqcandy-phosh-build || true
 	if [ "$DNS" = 1 ]; then
 		rm -f "$ROOTFS/etc/resolv.conf"
-		[ ! -e "$TEMP/resolv.conf" ] && [ ! -L "$TEMP/resolv.conf" ] || mv "$TEMP/resolv.conf" "$ROOTFS/etc/resolv.conf"
+		if [ -e "$TEMP/resolv.conf" ] || [ -L "$TEMP/resolv.conf" ]; then
+			mv "$TEMP/resolv.conf" "$ROOTFS/etc/resolv.conf"
+		fi
 	fi
 	rm -rf -- "$TEMP" "$SOURCE"
 }

@@ -123,8 +123,9 @@ case "$VAAPI" in auto|on|off) ;; *) die "--vaapi must be auto, on or off" ;; esa
 case "$BASEBAND" in auto|on|off) ;; *) die "--baseband must be auto, on or off" ;; esac
 case "$PHOSH_CUTOUT" in auto|on|off) ;; *) die '--phosh-cutout must be auto, on or off' ;; esac
 if [ "$PHOSH_CUTOUT" = on ]; then
-	[ "$DEVICE" = qqcandy ] && [ "$DISTRO" = nura ] && [ "$UI" = phosh ] ||
+	if [ "$DEVICE" != qqcandy ] || [ "$DISTRO" != nura ] || [ "$UI" != phosh ]; then
 		die 'native cutout support is currently reviewed only for qqcandy/Nura/Phosh'
+	fi
 fi
 for ref in "$BASEBAND_OWNER_REF" "$BASEBAND_MM_REF"; do
 	[[ "$ref" = latest || "$ref" =~ ^[0-9a-f]{40}$ ]] || die 'baseband refs must be latest or full commit IDs'
@@ -145,7 +146,9 @@ HOSTNAME_OVERRIDE="${HOSTNAME_OVERRIDE:-$DEVICE}"
 
 [ "$(id -u)" = "0" ] || die "must run as root"
 if [ -n "$BASEBAND_SUPPORT" ]; then
-	[ "$DEVICE" = qqcandy ] && [ "$BASEBAND" != off ] || die '--baseband-support requires qqcandy baseband installation'
+	if [ "$DEVICE" != qqcandy ] || [ "$BASEBAND" = off ]; then
+		die '--baseband-support requires qqcandy baseband installation'
+	fi
 	BASEBAND_SUPPORT="$(realpath -e "$BASEBAND_SUPPORT")"
 	python3 "$HERE/tools/provision-baseband.py" --source "$BASEBAND_SUPPORT" --check-only
 fi
