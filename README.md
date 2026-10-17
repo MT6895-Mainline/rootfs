@@ -71,10 +71,10 @@ host/CI runner instead. Do not disable unrelated host interpreters.
 
 | Profile | Kernel branch | userdata / nvdata |
 | --- | --- | --- |
-| qqcandy (21143 / 22801) | 6.18-mt6895-oplus-qqcandy | measured sdc80 / sdc10 |
+| qqcandy (OPPO K10 / OnePlus Ace) | 6.18-mt6895-oplus-qqcandy | measured sdc80 / sdc10 |
 | pearl | 7.2-mt6895-xiaomi-pearl | device profile |
 | xaga | 7.2-mt6895-xiaomi-xaga | device profile |
-| rubens | port/rubens-clean | provisional profile |
+| rubens (Redmi K50) | port/rubens-clean | provisional profile |
 | yuechu (Civi 3) | 7.2-mt6895-xiaomi-yuechu | device profile |
 
 The workflow's `xaga-6.18` variant uses the xaga profile and overrides the
