@@ -3,17 +3,17 @@ on:
   workflow_dispatch:
     inputs:
       devices:
-        description: "Space-separated: qqcandy pearl xaga xaga-6.18 rubens"
+        description: "Space-separated: qqcandy pearl xaga xaga-6.18 rubens yuechu"
         default: "qqcandy"
         required: true
       distros:
-        description: "Space-separated: mobian arch nura debian"
+        description: "Space-separated: mobian arch nura debian ubuntu fedora"
         default: "mobian arch nura"
         required: true
       ui:
-        description: "User interface"
+        description: "User interface (nura supports console/phosh only)"
         type: choice
-        options: [phosh, console]
+        options: [phosh, console, gnome, kde, kdeplasmamobile, xfce]
         default: phosh
       userspace_only:
         description: "Validate userspace only (no deployable kernel/image)"
@@ -32,7 +32,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: rootfs-${{ github.ref }}-${{ inputs.distros }}-${{ inputs.userspace_only }}
+  group: rootfs-${{ github.ref }}-${{ inputs.distros }}-${{ inputs.userspace_only }}-${{ inputs.ui }}
   cancel-in-progress: false
 
 jobs:
@@ -103,7 +103,7 @@ jobs:
           sha256sum -c SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: rootfs-${{ matrix.variant }}-${{ matrix.distro }}
+          name: rootfs-${{ matrix.variant }}-${{ matrix.distro }}-${{ inputs.ui }}
           path: out/*
           if-no-files-found: error
   release:
@@ -130,6 +130,7 @@ jobs:
           files: release/*
           body: |
             Matching Image, DTB, rootfs and kernel modules.
+            User interface: ${{ inputs.ui }} (non-phosh images carry the UI in their names).
             No extracted vendor firmware or modem NVRAM is injected.
             Default local user PIN: 1234. Root and SSH password login are disabled.
             Build success is not device boot/IMS/VCP hardware validation.

@@ -158,6 +158,13 @@ def validate(args):
                 raise ValueError("greeter and development Phosh service both enabled")
             if args.phosh_unit == "gdm.service":
                 validate_gdm(root, args.user)
+        elif args.ui != "console":
+            if os.readlink(root / "etc/systemd/system/default.target").split("/")[-1] != "graphical.target":
+                raise ValueError(f"{args.ui} must boot to graphical.target")
+            if not args.display_manager_unit:
+                raise ValueError(f"{args.ui} needs a display manager unit")
+            if not enabled(root, args.display_manager_unit):
+                raise ValueError(f"display manager not enabled: {args.display_manager_unit}")
         for unit in units:
             if not enabled(root, unit):
                 raise ValueError(f"unit not enabled: {unit}")
@@ -200,9 +207,11 @@ def main():
     parser.add_argument("--user", required=True)
     parser.add_argument("--device", required=True)
     parser.add_argument("--init", choices=("systemd", "openrc"), required=True)
-    parser.add_argument("--ui", choices=("phosh", "console"), required=True)
+    parser.add_argument("--ui", choices=("console", "phosh", "gnome", "kde",
+                                          "kdeplasmamobile", "xfce"), required=True)
     parser.add_argument("--ssh-unit", default="ssh.service")
     parser.add_argument("--phosh-unit", default="greetd.service")
+    parser.add_argument("--display-manager-unit", default="")
     parser.add_argument("--kernel", default="none")
     parser.add_argument("--required-module", action="append", default=[])
     parser.add_argument("--vaapi", action="store_true")

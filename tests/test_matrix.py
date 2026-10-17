@@ -14,6 +14,12 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual(len(result), 3)
         self.assertEqual({r["distro"] for r in result}, {"mobian", "arch", "nura"})
 
+    def test_extended_distros_and_yuechu(self):
+        result = module.matrix("yuechu", "ubuntu fedora")["include"]
+        self.assertEqual({r["distro"] for r in result}, {"ubuntu", "fedora"})
+        self.assertEqual({r["kernel"] for r in result},
+                         {"7.2-mt6895-xiaomi-yuechu"})
+
     def test_legacy_variant_uses_real_profile(self):
         entry = module.matrix("xaga-6.18", "arch")["include"][0]
         self.assertEqual(entry["device"], "xaga")

@@ -44,8 +44,30 @@ distro_configure() {
 	distro_install_packages "$root" "networkmanager bluez bluez-utils modemmanager \
 		iio-sensor-proxy alsa-ucm-conf alsa-utils openssh sudo kmod e2fsprogs \
 		iproute2 bash shadow"
-	[ "$UI" != phosh ] || distro_install_packages "$root" \
-		"phosh phoc gdm pipewire-pulse wireplumber squeekboard gnome-keyring gnome-settings-daemon"
+	# Desktop matrix.  phosh keeps the packaged GDM + Phosh Wayland
+	# session; the desktop UIs select their display manager here.
+	case "$UI" in
+		console) ;;
+		phosh)
+			distro_install_packages "$root" \
+				"phosh phoc gdm pipewire-pulse wireplumber squeekboard gnome-keyring gnome-settings-daemon" ;;
+		gnome)
+			DISPLAY_MANAGER_UNIT=gdm.service
+			distro_install_packages "$root" \
+				"gnome gdm pipewire-pulse wireplumber" ;;
+		kde)
+			DISPLAY_MANAGER_UNIT=sddm.service
+			distro_install_packages "$root" "plasma-desktop plasma-nm sddm" ;;
+		kdeplasmamobile)
+			DISPLAY_MANAGER_UNIT=sddm.service
+			distro_install_packages "$root" "plasma-mobile plasma-nm sddm" ;;
+		xfce)
+			DISPLAY_MANAGER_UNIT=lightdm.service
+			distro_install_packages "$root" "xfce4 xfce4-goodies lightdm lightdm-gtk-greeter" ;;
+		*)
+			die "arch backend does not know --ui $UI" ;;
+	esac
+	[ "$UI" = console ] || distro_install_packages "$root" "pipewire-pulse wireplumber"
 	distro_chroot "$root" userdel -r alarm
 	systemctl --root="$root" disable systemd-networkd.service
 	distro_common_configure "$root"

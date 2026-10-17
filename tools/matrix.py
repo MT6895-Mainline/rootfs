@@ -9,8 +9,9 @@ DEVICES = {
     "xaga": ("xaga", "7.2-mt6895-xiaomi-xaga", ""),
     "xaga-6.18": ("xaga", "6.18-mt6895-xiaomi-xaga", "-6.18"),
     "rubens": ("rubens", "port/rubens-clean", ""),
+    "yuechu": ("yuechu", "7.2-mt6895-xiaomi-yuechu", ""),
 }
-DISTROS = {"debian", "mobian", "arch", "nura"}
+DISTROS = {"debian", "mobian", "arch", "nura", "ubuntu", "fedora"}
 
 
 def matrix(devices, distros):

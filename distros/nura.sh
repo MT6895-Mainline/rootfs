@@ -20,6 +20,12 @@ pmb() {
 distro_bootstrap() {
 	local root="$1" suite="$2"
 	[ "$suite" = edge ] || die "the pinned Nura backend supports --suite edge only"
+	# The pinned Nura/OpenRC image ships the Phosh stack; the desktop UIs of
+	# debian/ubuntu/arch/fedora are not packaged in this pinned tree.
+	case "$UI" in
+		console|phosh) ;;
+		*) die "nura supports --ui console or phosh (use debian/ubuntu/arch/fedora for $UI)" ;;
+	esac
 	if [ "$(uname -m)" != aarch64 ]; then
 		arch-test arm64
 		[ -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ] ||

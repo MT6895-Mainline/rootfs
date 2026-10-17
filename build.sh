@@ -4,13 +4,16 @@
 #
 # Builds a flashable rootfs image for an MT6895 device:
 #   - kernel modules built from the matching linux branch, so vermagic matches
-#   - Debian/Mobian, Arch Linux ARM or Nura userspace (ARM64 via QEMU)
+#   - Debian/Mobian, Ubuntu, Arch Linux ARM, Fedora or Nura userspace (ARM64
+#     via QEMU), Phosh or one of the desktop UIs (gnome/kde/kdeplasmamobile/
+#     xfce) on the Debian/Ubuntu/Arch/Fedora backends
 #   - per-device + common overlay applied
 #   - optional bring-your-own firmware blobs
 #   - outputs a sparse ext4 image (+ option to split for the 2GB release limit)
 #
 # Output naming follows the sibling xaga build project:
-#   rootfs-<device>-<distro>-<timestamp>-sparse.img[.gz] and SHA256SUMS
+#   rootfs-<device>-<distro>[-<ui>]-<timestamp>-sparse.img[.gz] and SHA256SUMS
+#   (the ui suffix only appears for non-phosh interfaces)
 #
 # Usage:
 #   sudo ./build.sh --device pearl --kernel-repo ./linux
@@ -21,6 +24,7 @@
 #   sudo ./build.sh --device pearl --kernel-repo ./linux --kernel-localversion "+"
 #   sudo ./build.sh --device qqcandy --distro nura --kernel-repo ./linux
 #   sudo ./build.sh --device qqcandy --distro arch --rootfs-only --tar
+#   sudo ./build.sh --device yuechu --distro fedora --ui kde --kernel-repo ./linux
 #
 set -euo pipefail
 
@@ -130,7 +134,8 @@ done
 
 [ -n "$DEVICE" ] || die "--device is required (see devices/*.conf)"
 [[ "$DEVICE" =~ ^[a-z0-9-]+$ && "$DISTRO" =~ ^[a-z0-9-]+$ ]] || die "invalid profile name"
-case "$UI" in console|phosh) ;; *) die "--ui must be console or phosh" ;; esac
+case "$UI" in console|phosh|gnome|kde|kdeplasmamobile|xfce) ;;
+	*) die "--ui must be console, phosh, gnome, kde, kdeplasmamobile or xfce" ;; esac
 case "$VAAPI" in auto|on|off) ;; *) die "--vaapi must be auto, on or off" ;; esac
 case "$BASEBAND" in auto|on|off) ;; *) die "--baseband must be auto, on or off" ;; esac
 for ref in "$BASEBAND_OWNER_REF" "$BASEBAND_MM_REF"; do
@@ -205,8 +210,12 @@ KBOUT="$WORK/kernel"
 INITRAMFS_INFO=none
 # the device name is part of the image name: several devices are built in one
 # run and their artifacts are collected into a single release
-STUB="rootfs-$DEVICE-$DISTRO_NAME$NAME_SUFFIX-$TS"
-[ "$ROOTFS_ONLY" = 0 ] || STUB="userspace-only-$DEVICE-$DISTRO_NAME-$TS"
+# Non-default UIs get their own artifact names, so a UI matrix never
+# collides and the phosh images keep their historical names.
+UI_SUFFIX=""
+[ "$UI" = phosh ] || UI_SUFFIX="-$UI"
+STUB="rootfs-$DEVICE-$DISTRO_NAME$NAME_SUFFIX$UI_SUFFIX-$TS"
+[ "$ROOTFS_ONLY" = 0 ] || STUB="userspace-only-$DEVICE-$DISTRO_NAME$UI_SUFFIX-$TS"
 BASE="$STUB.img"
 IMGF="$OUT/$BASE"
 mkdir -p "$ROOTFS" "$KBOUT" "$OUT"
@@ -510,7 +519,8 @@ install -d -m 1777 "$ROOTFS/tmp" "$ROOTFS/var/tmp"
 log "8b. validate image contracts"
 checks=("$ROOTFS" --device "$DEVICE" --user "$DEFAULT_USER" --init "$INIT_SYSTEM"
 	--ui "$UI" --kernel "$KVER" --ssh-unit "${SSH_UNIT:-ssh.service}"
-	--phosh-unit "${PHOSH_UNIT:-greetd.service}")
+	--phosh-unit "${PHOSH_UNIT:-greetd.service}"
+	--display-manager-unit "${DISPLAY_MANAGER_UNIT:-}")
 [ -z "$ROOT_PASSWORD" ] || checks+=(--allow-root-password)
 [ "$BASEBAND_INSTALLED" = 0 ] || checks+=(--baseband)
 if [ "$ROOTFS_ONLY" = 0 ] && [ -z "$KERNEL_CONFIG_FILE" ]; then
@@ -562,7 +572,7 @@ fi
 
 # What the kernel has to report for these modules to be found: if `uname -r` on
 # the device differs from this, the modules will not load.
-cat > "$OUT/KERNEL-INFO-$DEVICE$NAME_SUFFIX-$DISTRO_NAME.txt" <<EOF
+cat > "$OUT/KERNEL-INFO-$DEVICE$NAME_SUFFIX-$DISTRO_NAME$UI_SUFFIX.txt" <<EOF
 device:          $DEVICE
 distribution:    $DISTRO_NAME/$SUITE
 kernel commit:   ${KERNEL_COMMIT:-none (userspace-only, not deployable)}
@@ -576,20 +586,20 @@ local version:   ${KERNEL_LOCALVERSION:-<none>}
 
 check on the device:  uname -r     # must print $KVER
 EOF
-cat "$OUT/KERNEL-INFO-$DEVICE$NAME_SUFFIX-$DISTRO_NAME.txt"
+cat "$OUT/KERNEL-INFO-$DEVICE$NAME_SUFFIX-$DISTRO_NAME$UI_SUFFIX.txt"
 
 # Ship the kernel these modules were built against, so the pair cannot be mixed
 # up.  The DTB may be embedded in the Image (the pearl branch does that).
 if [ -f "$KBOUT/arch/arm64/boot/Image" ]; then
-	cp "$KBOUT/arch/arm64/boot/Image" "$OUT/Image-$DEVICE$NAME_SUFFIX-$DISTRO_NAME"
+	cp "$KBOUT/arch/arm64/boot/Image" "$OUT/Image-$DEVICE$NAME_SUFFIX-$DISTRO_NAME$UI_SUFFIX"
 fi
 if [ "$INITRAMFS_INFO" != none ]; then
-	cp "$WORK/initramfs/initramfs-$DEVICE.cpio" "$OUT/initramfs-$DEVICE$NAME_SUFFIX-$DISTRO_NAME.cpio"
-	cp "$WORK/initramfs/manifest.json" "$OUT/initramfs-$DEVICE$NAME_SUFFIX-$DISTRO_NAME.json"
+	cp "$WORK/initramfs/initramfs-$DEVICE.cpio" "$OUT/initramfs-$DEVICE$NAME_SUFFIX-$DISTRO_NAME$UI_SUFFIX.cpio"
+	cp "$WORK/initramfs/manifest.json" "$OUT/initramfs-$DEVICE$NAME_SUFFIX-$DISTRO_NAME$UI_SUFFIX.json"
 fi
 DTB="${DTS%.dts}.dtb"
 if [ -f "$KBOUT/arch/arm64/boot/dts/mediatek/$DTB" ]; then
-	cp "$KBOUT/arch/arm64/boot/dts/mediatek/$DTB" "$OUT/dtb-$DEVICE$NAME_SUFFIX-$DISTRO_NAME.dtb"
+	cp "$KBOUT/arch/arm64/boot/dts/mediatek/$DTB" "$OUT/dtb-$DEVICE$NAME_SUFFIX-$DISTRO_NAME$UI_SUFFIX.dtb"
 fi
 
 ( cd "$OUT" && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' |

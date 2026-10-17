@@ -58,15 +58,28 @@ distro_common_configure() {
 	if [ "$INIT_SYSTEM" = systemd ]; then
 		distro_enable_units "$root" NetworkManager.service bluetooth.service \
 			ModemManager.service "$SSH_UNIT"
-		if [ "$UI" = phosh ]; then
-			if [ -f "$root/usr/lib/systemd/system/phosh.service" ] ||
-				[ -f "$root/lib/systemd/system/phosh.service" ]; then
-				systemctl --root="$root" disable phosh.service
-			fi
-			distro_enable_units "$root" "$PHOSH_UNIT"
-			systemctl --root="$root" set-default graphical.target
-		fi
+		distro_configure_ui "$root"
 	fi
+}
+
+# Graphical UIs: every non-console selection boots to graphical.target; phosh
+# keeps its session-service contract, the desktop UIs use the display manager
+# the distro backend selects (DISPLAY_MANAGER_UNIT).
+distro_configure_ui() {
+	local root="$1"
+	[ "$UI" != console ] || return 0
+	systemctl --root="$root" set-default graphical.target
+	if [ "$UI" = phosh ]; then
+		if [ -f "$root/usr/lib/systemd/system/phosh.service" ] ||
+			[ -f "$root/lib/systemd/system/phosh.service" ]; then
+			systemctl --root="$root" disable phosh.service
+		fi
+		distro_enable_units "$root" "$PHOSH_UNIT"
+		return 0
+	fi
+	[ -n "${DISPLAY_MANAGER_UNIT:-}" ] ||
+		die "backend did not select a display manager for --ui $UI"
+	distro_enable_units "$root" "$DISPLAY_MANAGER_UNIT"
 }
 
 distro_finalize() {

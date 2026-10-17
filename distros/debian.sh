@@ -61,6 +61,27 @@ distro_install_packages() {
 
 distro_configure() {
 	local root="$1"
-	[ "$UI" != phosh ] || distro_install_packages "$root" "phosh-core phrog wireplumber"
+	# Desktop matrix.  phosh keeps the Mobian-style Phrog/Greetd session;
+	# the desktop UIs use the display manager named here.
+	case "$UI" in
+		console) ;;
+		phosh)
+			distro_install_packages "$root" "phosh-core phrog wireplumber" ;;
+		gnome)
+			DISPLAY_MANAGER_UNIT=gdm3.service
+			distro_install_packages "$root" "gnome-core gnome-shell gdm3 gnome-tweaks" ;;
+		kde)
+			DISPLAY_MANAGER_UNIT=sddm.service
+			distro_install_packages "$root" "kde-plasma-desktop plasma-nm sddm" ;;
+		kdeplasmamobile)
+			DISPLAY_MANAGER_UNIT=sddm.service
+			distro_install_packages "$root" "plasma-mobile plasma-nm sddm" ;;
+		xfce)
+			DISPLAY_MANAGER_UNIT=lightdm.service
+			distro_install_packages "$root" "xfce4 xfce4-goodies lightdm lightdm-gtk-greeter" ;;
+		*)
+			die "debian backend does not know --ui $UI" ;;
+	esac
+	[ "$UI" = console ] || distro_install_packages "$root" "pipewire wireplumber"
 	distro_common_configure "$root"
 }

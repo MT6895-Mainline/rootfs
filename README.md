@@ -11,6 +11,8 @@ and modules. Device-specific hardware assumptions live in explicit profiles.
 | `arch` | rolling | signed official Arch Linux ARM tarball / systemd | Phosh |
 | `nura` | edge | pinned pmbootstrap/pmaports / OpenRC | Phosh |
 | `debian` | trixie | mmdebstrap / systemd | Phosh |
+| `ubuntu` | noble | mmdebstrap from ports.ubuntu.com / systemd | Phosh / GDM |
+| `fedora` | 42 | official Container Base image + dnf (chroot) / systemd | Phosh / GDM |
 
 Nura [renamed from postmarketOS in September 2026](https://nura.eco/blog/2026/09/27/nura-rename/).
 The upstream tooling, repository and package identifiers are still named
@@ -34,8 +36,14 @@ sudo bash ./build.sh --device qqcandy --distro nura --kernel-repo ../linux
 ```
 
 Default UI is Phosh; `--ui console` selects a console build.
-Mobian/Debian use Phrog/Greetd; Arch uses its packaged GDM with the default
-user's Phosh Wayland session, and Nura uses its native Phosh/OpenRC packages.
+The desktop matrix adds `--ui gnome|kde|kdeplasmamobile|xfce` for
+mobian/debian/ubuntu/arch/fedora, each backend installing its native packages
+and enabling the matching display manager (GDM/SDDM/LightDM); non-phosh
+images carry the UI in their artifact names (`rootfs-<device>-<distro>-<ui>-...`).
+Nura stays `console`/`phosh` only: its pinned package tree ships just the
+Phosh stack.  Mobian/Debian use Phrog/Greetd; Arch uses its packaged GDM with
+the default user's Phosh Wayland session, and Nura uses its native
+Phosh/OpenRC packages.
 `--suite` overrides a backend's default (Arch currently accepts only rolling,
 the pinned Nura backend only edge). `--mirror` selects the Debian mirror.
 Actions **rootfs** offers a strict device/distribution matrix and optionally
@@ -67,6 +75,7 @@ host/CI runner instead. Do not disable unrelated host interpreters.
 | pearl | 7.2-mt6895-xiaomi-pearl | device profile |
 | xaga | 7.2-mt6895-xiaomi-xaga | device profile |
 | rubens | port/rubens-clean | provisional profile |
+| yuechu (Civi 3) | 7.2-mt6895-xiaomi-yuechu | device profile |
 
 The workflow's `xaga-6.18` variant uses the xaga profile and overrides the
 kernel ref to `6.18-mt6895-xiaomi-xaga`. Locally use `--device xaga
@@ -103,15 +112,17 @@ board startup is validated. IMS/VoLTE are not claimed working by this builder.
 ## Kernel and Artifacts
 
 ```text
-rootfs-<device>-<distro>[-<suffix>]-<timestamp>-sparse.img[.gz]
-rootfs-<device>-<distro>[-<suffix>]-<timestamp>.tar.zst   (--tar)
-Image-<device>-<distro>
-dtb-<device>-<distro>.dtb
-initramfs-qqcandy-<distro>.cpio
-initramfs-qqcandy-<distro>.json
-KERNEL-INFO-<device>-<distro>.txt
+rootfs-<device>-<distro>[-<suffix>][-<ui>]-<timestamp>-sparse.img[.gz]
+rootfs-<device>-<distro>[-<suffix>][-<ui>]-<timestamp>.tar.zst   (--tar)
+Image-<device>[-<suffix>]-<distro>[-<ui>]
+dtb-<device>[-<suffix>]-<distro>[-<ui>].dtb
+initramfs-qqcandy[-<ui>].cpio
+initramfs-qqcandy[-<ui>].json
+KERNEL-INFO-<device>[-<suffix>]-<distro>[-<ui>].txt
 SHA256SUMS
 ```
+
+`[-<ui>]` is present for every interface except the default (`phosh`).
 
 A fresh source export builds **Image**, the requested board DTB and modules.
 For qqcandy it first builds a pinned initramfs revision, packages identical
