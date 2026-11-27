@@ -1,0 +1,12 @@
+[Unit]
+Description=yuechu USB NCM network gadget (169.254.42.1)
+After=systemd-modules-load.service local-fs.target
+Before=ssh.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/yuechu-usbnet
+
+[Install]
+WantedBy=multi-user.target

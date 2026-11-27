@@ -1,0 +1,26 @@
+#!/bin/sh
+# yuechu: USB NCM gadget so a PC can reach the phone over the cable.
+# Phone: 169.254.42.1/16 (+ IPv6 link-local). Windows/Linux hosts get APIPA automatically.
+set -e
+G=/sys/kernel/config/usb_gadget/yuechu
+mountpoint -q /sys/kernel/config || mount -t configfs none /sys/kernel/config
+modprobe libcomposite 2>/dev/null || true
+modprobe usb_f_ncm 2>/dev/null || true
+for i in $(seq 1 50); do [ -n "$(ls /sys/class/udc 2>/dev/null)" ] && break; sleep 0.2; done
+UDC=$(ls /sys/class/udc | head -1); [ -n "$UDC" ] || { echo "no UDC"; exit 1; }
+for g in /sys/kernel/config/usb_gadget/*; do [ -e "$g/UDC" ] && [ -n "$(cat $g/UDC)" ] && echo "" > $g/UDC || true; done
+mkdir -p $G; cd $G
+echo 0x1d6b > idVendor; echo 0x0104 > idProduct
+mkdir -p strings/0x409
+echo yuechu-mainline > strings/0x409/serialnumber
+echo Xiaomi > strings/0x409/manufacturer
+echo "Civi 3" > strings/0x409/product
+mkdir -p configs/c.1/strings/0x409; echo ncm > configs/c.1/strings/0x409/configuration
+mkdir -p functions/ncm.usb0
+[ -e configs/c.1/ncm.usb0 ] || ln -s functions/ncm.usb0 configs/c.1/
+echo "$UDC" > UDC
+IF=$(cat functions/ncm.usb0/ifname 2>/dev/null || echo usb0)
+for i in $(seq 1 50); do ip link show "$IF" >/dev/null 2>&1 && break; sleep 0.2; done
+ip link set "$IF" up
+ip addr replace 169.254.42.1/16 dev "$IF"
+echo "usbnet up on $IF via $UDC"

@@ -92,6 +92,12 @@ distro_finalize() {
 	rm -f "$root/etc/resolv.conf" "$root/etc/ssh/ssh_host_"* "$root/var/lib/dbus/machine-id"
 	ln -s /run/NetworkManager/resolv.conf "$root/etc/resolv.conf"
 	: > "$root/etc/machine-id"
+	# Optional per-device hook (devices/<device>.finalize.sh).
+	if [ -f "$HERE/devices/$DEVICE.finalize.sh" ]; then
+		# shellcheck disable=SC1090
+		. "$HERE/devices/$DEVICE.finalize.sh"
+		device_finalize "$root"
+	fi
 	find "$root/var/cache" -type f -delete
 	[ ! -d "$root/var/lib/apt/lists" ] || find "$root/var/lib/apt/lists" -type f -delete
 }

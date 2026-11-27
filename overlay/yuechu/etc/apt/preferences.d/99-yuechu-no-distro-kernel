@@ -1,0 +1,8 @@
+# yuechu boots the kernel from the boot partition (packed by hand from the
+# MT6895-Mainline/linux 7.2-mt6895-xiaomi-yuechu branch). LK never looks at
+# /boot, so distro kernels are useless here and their hooks (flash-kernel,
+# grub) fail or try to touch boot partitions.
+# Kernel updates = rebuild Image + /lib/modules from the git branch together.
+Package: linux-image-* linux-headers-* linux-kbuild-* flash-kernel grub-* grub2* shim-* systemd-boot*
+Pin: release *
+Pin-Priority: -1
